@@ -105,12 +105,15 @@ func (a *App) handleScanZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := &dnsutil.Resolver{Addr: a.Cfg.DNSResolver, Timeout: 3 * time.Second}
-	records := res.Scan(ctx, name)
+	records, skipped := res.Scan(ctx, name)
 	ns, _ := res.LookupNS(ctx, name)
 	if records == nil {
 		records = []dnsutil.ParsedRR{}
 	}
-	writeJSON(w, 200, map[string]any{"name": name, "records": records, "current_nameservers": ns})
+	if skipped > 0 {
+		a.Log.Warn("zone scan discarded unroutable answers; DNS on this host is being rewritten", "zone", name, "skipped", skipped, "resolver", a.Cfg.DNSResolver)
+	}
+	writeJSON(w, 200, map[string]any{"name": name, "records": records, "current_nameservers": ns, "skipped_addresses": skipped})
 }
 
 func (a *App) handleCreateZone(w http.ResponseWriter, r *http.Request) {

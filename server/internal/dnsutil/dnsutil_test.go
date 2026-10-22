@@ -1,6 +1,7 @@
 package dnsutil
 
 import (
+	"net/netip"
 	"strings"
 	"testing"
 )
@@ -168,5 +169,17 @@ func TestReverse(t *testing.T) {
 	}
 	if !IsReverseZone("2.0.192.in-addr.arpa.") || IsReverseZone("example.com.") {
 		t.Error("IsReverseZone")
+	}
+}
+
+func TestIsUnroutable(t *testing.T) {
+	for ip, want := range map[string]bool{
+		"198.18.7.1": true, "198.19.255.255": true, "127.0.0.1": true, "0.0.0.0": true, "169.254.1.1": true,
+		"100.64.0.1": true, "240.0.0.1": true, "224.0.0.1": true, "::1": true, "fe80::1": true, "fc00::5": true,
+		"::ffff:198.18.0.1": true, "93.184.215.14": false, "10.0.0.5": false, "192.168.1.1": false, "2606:4700::1111": false,
+	} {
+		if got := IsUnroutable(netip.MustParseAddr(ip)); got != want {
+			t.Errorf("IsUnroutable(%s) = %v, want %v", ip, got, want)
+		}
 	}
 }

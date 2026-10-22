@@ -102,7 +102,7 @@ Requests are rate limited per token or session (600 burst, 1200 per minute).
 | Method | Path | Permission | Description |
 | --- | --- | --- | --- |
 | GET | `/` | zones.read | Zones visible to the caller |
-| POST | `/scan` | zones.create | `{name}` discovers existing public records |
+| POST | `/scan` | zones.create | `{name}` discovers existing public records. `skipped_addresses` counts A/AAAA answers dropped for pointing at reserved ranges (for example a fake-IP proxy rewriting DNS) |
 | POST | `/` | zones.create | `{name, kind?, masters?, nameserver_set_id?, records?, dnssec?, skip_verification?, template_id?}`. `name` may be a CIDR such as `192.0.2.0/24` to create its reverse zone. `kind` is Native, Master, Slave, Producer or Consumer |
 | GET | `/{zoneID}` | zones.read | Zone with serial and DNSSEC state |
 | DELETE | `/{zoneID}` | zones.delete | `{confirm: domain}` |

@@ -11,7 +11,8 @@ ARG NODE_VERSION=24
 # ---------------------------------------------------------------------------
 # 1. Web UI
 # ---------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-bookworm-slim AS web
+# The UI bundle is platform independent, so build it natively.
+FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-bookworm-slim AS web
 ENV CI=true
 RUN corepack enable && corepack prepare pnpm@10.31.0 --activate
 WORKDIR /src/web
@@ -25,9 +26,11 @@ RUN mkdir -p /src/server/internal/web && pnpm run build
 # ---------------------------------------------------------------------------
 # 2. API server
 # ---------------------------------------------------------------------------
-FROM golang:${GO_VERSION}-bookworm AS api
+# Cross-compile on the build platform instead of emulating the target.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS api
+ARG TARGETOS=linux TARGETARCH
 WORKDIR /src/server
-ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-buildvcs=false
+ENV CGO_ENABLED=0 GOFLAGS=-buildvcs=false
 COPY server/go.mod server/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY server/ ./
@@ -37,7 +40,7 @@ ARG VERSION=1.0.0
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go test ./... && \
-    go build -trimpath \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
       -ldflags "-s -w -X github.com/flare-dns/flare/internal/api.Version=${VERSION}" \
       -o /out/flare ./cmd/flare
 

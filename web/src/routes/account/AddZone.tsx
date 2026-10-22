@@ -18,6 +18,7 @@ interface ScanResult {
   name: string;
   records: ParsedRecord[];
   current_nameservers: string[];
+  skipped_addresses?: number;
 }
 
 type Source = "scan" | "file" | "empty";
@@ -274,25 +275,34 @@ export default function AddZone() {
               </Text>
             </Section>
           ) : source === "scan" ? (
-            <Section
-              padded={false}
-              title={`${scan.records.length} records found`}
-              description={`We looked up common records for ${stripDot(scan.name)}. Deselect anything you do not want to import. You can edit records after the domain is added.`}
-            >
-              <VirtualTable
-                ariaLabel="Discovered records"
-                rows={scan.records}
-                columns={columns}
-                rowKey={recKey}
-                selection={{ selected, onChange: setSelected }}
-                maxHeight="420px"
-                empty={
-                  <div className="px-5 py-10 text-center text-kumo-subtle">
-                    No records were found. The domain may be new, or its current provider blocks lookups.
-                  </div>
-                }
-              />
-            </Section>
+            <>
+              {!!scan.skipped_addresses && (
+                <Banner
+                  variant="alert"
+                  title="Some lookups returned fake addresses"
+                  description={`${scan.skipped_addresses} A or AAAA answers pointed at reserved addresses such as 198.18.0.0/15 and were left out. Something between Flare and its DNS resolver is rewriting answers, usually a proxy or VPN in fake-IP mode. Review the remaining records, or import a zone file exported from the current provider instead.`}
+                />
+              )}
+              <Section
+                padded={false}
+                title={`${scan.records.length} records found`}
+                description={`We looked up common records for ${stripDot(scan.name)}. Deselect anything you do not want to import. You can edit records after the domain is added.`}
+              >
+                <VirtualTable
+                  ariaLabel="Discovered records"
+                  rows={scan.records}
+                  columns={columns}
+                  rowKey={recKey}
+                  selection={{ selected, onChange: setSelected }}
+                  maxHeight="420px"
+                  empty={
+                    <div className="px-5 py-10 text-center text-kumo-subtle">
+                      No records were found. The domain may be new, or its current provider blocks lookups.
+                    </div>
+                  }
+                />
+              </Section>
+            </>
           ) : source === "file" ? (
             <Section title="Zone file" description="Paste the contents of the exported zone. SOA and apex NS records are replaced by your own.">
               <InputArea

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -329,9 +330,51 @@ var scanLabels = []string{"", "www", "mail", "webmail", "smtp", "imap", "pop", "
 	"cdn", "static", "assets", "dev", "staging", "test", "m", "vpn", "portal", "status", "docs", "support", "help", "login",
 	"auth", "sso", "git", "autodiscover", "autoconfig", "remote", "cloud", "files", "calendar", "news", "media", "img", "web"}
 
+// unroutable lists special-purpose ranges that never appear in public DNS. Answers in them come
+// from something rewriting DNS between Flare and the resolver, most often a proxy or VPN client in
+// "fake-IP" mode, which hands out a unique 198.18.0.0/15 address for every name it is asked about.
+var unroutable = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, p := range []string{"0.0.0.0/8", "100.64.0.0/10", "198.18.0.0/15", "240.0.0.0/4", "64:ff9b::/96", "100::/64", "2001:2::/48", "fc00::/7"} {
+		out = append(out, netip.MustParsePrefix(p))
+	}
+	return out
+}()
+
+// IsUnroutable reports whether ip is an address no public DNS record should point to.
+func IsUnroutable(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	if !ip.IsValid() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() {
+		return true
+	}
+	for _, p := range unroutable {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// bogusAddress reports whether rr is an A or AAAA record pointing at an unroutable address.
+func bogusAddress(rr dns.RR) bool {
+	var ip net.IP
+	switch v := rr.(type) {
+	case *dns.A:
+		ip = v.A
+	case *dns.AAAA:
+		ip = v.AAAA
+	default:
+		return false
+	}
+	addr, ok := netip.AddrFromSlice(ip)
+	return !ok || IsUnroutable(addr)
+}
+
 // Scan discovers commonly used records for a domain that is not yet hosted here, so they can be
-// imported when the zone is created.
-func (r *Resolver) Scan(ctx context.Context, zone string) []ParsedRR {
+// imported when the zone is created. It also returns how many address answers were discarded
+// because they pointed at unroutable addresses, which means the resolver's answers are being
+// rewritten and the scan is incomplete.
+func (r *Resolver) Scan(ctx context.Context, zone string) ([]ParsedRR, int) {
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 
@@ -355,6 +398,8 @@ func (r *Resolver) Scan(ctx context.Context, zone string) []ParsedRR {
 	// Detect wildcard records: answers identical to a random label's are covered by "*".
 	wildcard := map[string]bool{}
 	var out []ParsedRR
+	var mu sync.Mutex
+	skipped := 0
 	probe := "flare-probe-" + strconv.FormatInt(time.Now().UnixNano()%1e9, 36) + "." + zone
 	for _, qt := range []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeCNAME} {
 		resp, err := r.exchange(ctx, probe, qt)
@@ -367,6 +412,10 @@ func (r *Resolver) Scan(ctx context.Context, zone string) []ParsedRR {
 			if !strings.EqualFold(h.Name, probe) || (typ != "A" && typ != "AAAA" && typ != "CNAME") {
 				continue
 			}
+			if bogusAddress(rr) {
+				skipped++
+				continue
+			}
 			content := strings.TrimSpace(strings.TrimPrefix(rr.String(), h.String()))
 			key := typ + "|" + content
 			if !wildcard[key] {
@@ -376,7 +425,6 @@ func (r *Resolver) Scan(ctx context.Context, zone string) []ParsedRR {
 		}
 	}
 
-	var mu sync.Mutex
 	seen := map[string]bool{}
 	sem := make(chan struct{}, 12)
 	var wg sync.WaitGroup
@@ -402,6 +450,12 @@ func (r *Resolver) Scan(ctx context.Context, zone string) []ParsedRR {
 				}
 				// Only keep the first link of CNAME chains that belong to the zone.
 				if typ != "CNAME" && typ != dns.TypeToString[item.qtype] {
+					continue
+				}
+				if bogusAddress(rr) {
+					mu.Lock()
+					skipped++
+					mu.Unlock()
 					continue
 				}
 				content := strings.TrimSpace(strings.TrimPrefix(rr.String(), h.String()))
@@ -444,7 +498,7 @@ func (r *Resolver) Scan(ctx context.Context, zone string) []ParsedRR {
 		}
 		return filtered[i].Type < filtered[j].Type
 	})
-	return filtered
+	return filtered, skipped
 }
 
 // SOAContent builds SOA content.
