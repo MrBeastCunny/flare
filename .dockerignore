@@ -1,0 +1,12 @@
+**/node_modules
+**/.git
+**/.DS_Store
+web/dist
+server/internal/web/dist/assets
+server/internal/web/dist/index.html
+*.log
+.env
+.env.*
+!.env.example
+docker-compose*.yml
+**/.pnpm-store

@@ -1,0 +1,120 @@
+# Development stack: live-reloading API and web UI, PostgreSQL and PowerDNS.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# UI:            http://localhost:5173  (Vite, proxies /api and /scim to the API)
+# API:           http://localhost:8080
+# PowerDNS API:  http://localhost:8081  (key: dev-pdns-api-key)
+# DNS:           localhost:5300 (udp/tcp), e.g. dig @127.0.0.1 -p 5300 example.com
+# Postgres:      localhost:5432 (flare/flare, pdns/pdns)
+name: flare-dev
+
+x-pdns-db: &pdns-db
+  PDNS_DB_NAME: pdns
+  PDNS_DB_USER: pdns
+  PDNS_DB_PASSWORD: pdns
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: flare
+      POSTGRES_USER: flare
+      POSTGRES_PASSWORD: flare
+      <<: *pdns-db
+    ports:
+      - "${DEV_PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/10-pdns.sh:/docker-entrypoint-initdb.d/10-pdns.sh:ro
+      - ./deploy/postgres/pdns-schema.sql.inc:/docker-entrypoint-initdb.d/pdns-schema.sql.inc:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flare -d flare && pg_isready -U pdns -d pdns"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  pdns:
+    image: powerdns/pdns-auth-51:5.1.5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PDNS_AUTH_API_KEY: dev-pdns-api-key
+      TEMPLATE_FILES: gpgsql
+      PDNS_GPGSQL_HOST: postgres
+      PDNS_GPGSQL_DBNAME: pdns
+      PDNS_GPGSQL_USER: pdns
+      PDNS_GPGSQL_PASSWORD: pdns
+      PDNS_WEBSERVER_ALLOW_FROM: 0.0.0.0/0,::/0
+      PDNS_ALLOW_AXFR_IPS: 0.0.0.0/0,::/0
+      PDNS_LOGLEVEL: "5"
+    volumes:
+      - ./deploy/pdns/pdns.conf:/etc/powerdns/pdns.conf:ro
+      - ./deploy/pdns/templates.d/gpgsql.j2:/etc/powerdns/templates.d/gpgsql.j2:ro
+    ports:
+      - "${DEV_DNS_PORT:-5300}:53/udp"
+      - "${DEV_DNS_PORT:-5300}:53/tcp"
+      - "${DEV_PDNS_API_PORT:-8081}:8081"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pdns:
+        condition: service_started
+    environment:
+      FLARE_DEV: "true"
+      FLARE_DATABASE_URL: postgres://flare:flare@postgres:5432/flare?sslmode=disable
+      FLARE_PUBLIC_URL: http://localhost:5173
+      FLARE_SECRET_KEY: development-secret-key-change-me-0123456789
+      FLARE_LOG_FORMAT: text
+      FLARE_LOG_LEVEL: debug
+      FLARE_TRUST_PROXY: "true"
+      FLARE_BOOTSTRAP_PDNS_URL: http://pdns:8081
+      FLARE_BOOTSTRAP_PDNS_API_KEY: dev-pdns-api-key
+      FLARE_NS_CHECK_INTERVAL: 1m
+      FLARE_SMTP_HOST: mailpit
+      FLARE_SMTP_PORT: "1025"
+      FLARE_SMTP_FROM: Flare <flare@localhost>
+      FLARE_SMTP_TLS: none
+    ports:
+      - "${DEV_API_PORT:-8080}:8080"
+    volumes:
+      - ./server:/src/server
+      - gomod:/go/pkg/mod
+      - gocache:/root/.cache/go-build
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: web
+    depends_on:
+      - api
+    environment:
+      FLARE_API_URL: http://api:8080
+      npm_config_store_dir: /pnpm-store
+    ports:
+      - "${DEV_WEB_PORT:-5173}:5173"
+    volumes:
+      - ./web:/src/web
+      - web_node_modules:/src/web/node_modules
+      - pnpm_store:/pnpm-store
+
+  # Catches outgoing email (invitations, password resets): http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "${DEV_MAIL_PORT:-8025}:8025"
+
+volumes:
+  pgdata:
+  gomod:
+  gocache:
+  web_node_modules:
+  pnpm_store:

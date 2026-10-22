@@ -1,0 +1,32 @@
+# TLS-terminating reverse proxy in front of Flare.
+# Certificates are obtained automatically from Let's Encrypt for FLARE_DOMAIN.
+{
+	email {$ACME_EMAIL}
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$FLARE_DOMAIN} {
+	encode zstd gzip
+
+	# Do not expose Prometheus metrics publicly; scrape flare:8080 from the internal network.
+	@metrics path /metrics
+	respond @metrics 404
+
+	reverse_proxy flare:8080 {
+		header_up X-Real-IP {remote_host}
+		health_uri /healthz
+		health_interval 15s
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

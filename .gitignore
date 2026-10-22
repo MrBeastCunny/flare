@@ -1,0 +1,19 @@
+# Dependencies
+web/node_modules/
+
+# Build output (the embed directory keeps a placeholder)
+server/internal/web/dist/*
+!server/internal/web/dist/.gitkeep
+
+# Local configuration and data
+.env
+backups/
+*.log
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+
+# pnpm store created by containerized installs
+web/.pnpm-store/

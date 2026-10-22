@@ -1,0 +1,198 @@
+# Flare production stack.
+#
+#   cp .env.example .env      # then fill in every value marked REQUIRED
+#   docker compose up -d --build
+#
+# Services
+#   caddy     TLS termination and reverse proxy (ports 80/443)
+#   flare     dashboard and API (internal only, behind caddy)
+#   pdns      PowerDNS Authoritative Server (DNS on port 53 udp/tcp)
+#   postgres  PostgreSQL for Flare and PowerDNS (internal only)
+#   backup    nightly pg_dump of both databases into ./backups
+#
+# Networks
+#   edge      caddy <-> flare, and outbound internet access for flare (OIDC, SMTP, webhooks)
+#   dns       pdns, publishes port 53
+#   data      internal-only network for postgres and the PowerDNS HTTP API
+name: flare
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  postgres:
+    <<: *hardening
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-flare}
+      POSTGRES_USER: ${POSTGRES_USER:-flare}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PDNS_DB_NAME: ${PDNS_DB_NAME:-pdns}
+      PDNS_DB_USER: ${PDNS_DB_USER:-pdns}
+      PDNS_DB_PASSWORD: ${PDNS_DB_PASSWORD:?PDNS_DB_PASSWORD is required}
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - log_min_duration_statement=1000
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/10-pdns.sh:/docker-entrypoint-initdb.d/10-pdns.sh:ro
+      - ./deploy/postgres/pdns-schema.sql.inc:/docker-entrypoint-initdb.d/pdns-schema.sql.inc:ro
+    networks: [data]
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  pdns:
+    <<: *hardening
+    image: powerdns/pdns-auth-51:5.1.5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PDNS_AUTH_API_KEY: ${PDNS_API_KEY:?PDNS_API_KEY is required}
+      TEMPLATE_FILES: gpgsql
+      PDNS_GPGSQL_HOST: postgres
+      PDNS_GPGSQL_DBNAME: ${PDNS_DB_NAME:-pdns}
+      PDNS_GPGSQL_USER: ${PDNS_DB_USER:-pdns}
+      PDNS_GPGSQL_PASSWORD: ${PDNS_DB_PASSWORD}
+      # Only the Flare container (data network) may reach the HTTP API.
+      PDNS_WEBSERVER_ALLOW_FROM: ${PDNS_WEBSERVER_ALLOW_FROM:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}
+      PDNS_ALLOW_AXFR_IPS: ${PDNS_ALLOW_AXFR_IPS:-127.0.0.1/32}
+      PDNS_ALSO_NOTIFY: ${PDNS_ALSO_NOTIFY:-}
+      PDNS_LOGLEVEL: ${PDNS_LOGLEVEL:-4}
+    volumes:
+      - ./deploy/pdns/pdns.conf:/etc/powerdns/pdns.conf:ro
+      - ./deploy/pdns/templates.d/gpgsql.j2:/etc/powerdns/templates.d/gpgsql.j2:ro
+    ports:
+      - "${DNS_BIND_ADDRESS:-0.0.0.0}:53:53/udp"
+      - "${DNS_BIND_ADDRESS:-0.0.0.0}:53:53/tcp"
+    networks: [dns, data]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    healthcheck:
+      test: ["CMD", "pdns_control", "rping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  flare:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${FLARE_VERSION:-1.0.0}
+    image: ${FLARE_IMAGE:-flare:latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pdns:
+        condition: service_started
+    environment:
+      FLARE_PUBLIC_URL: https://${FLARE_DOMAIN:?FLARE_DOMAIN is required}
+      FLARE_DATABASE_URL: postgres://${POSTGRES_USER:-flare}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-flare}?sslmode=disable
+      FLARE_DB_MAX_CONNS: ${FLARE_DB_MAX_CONNS:-25}
+      FLARE_SECRET_KEY: ${FLARE_SECRET_KEY:?FLARE_SECRET_KEY is required (at least 32 characters)}
+      FLARE_TRUST_PROXY: "true"
+      FLARE_COOKIE_SECURE: "true"
+      FLARE_LOG_LEVEL: ${FLARE_LOG_LEVEL:-info}
+      FLARE_LOG_FORMAT: json
+      FLARE_DNS_RESOLVER: ${FLARE_DNS_RESOLVER:-8.8.8.8:53}
+      FLARE_NS_CHECK_INTERVAL: ${FLARE_NS_CHECK_INTERVAL:-5m}
+      FLARE_SESSION_TTL: ${FLARE_SESSION_TTL:-168h}
+      FLARE_METRICS_TOKEN: ${FLARE_METRICS_TOKEN:-}
+      FLARE_WEBHOOK_ALLOW_PRIVATE: ${FLARE_WEBHOOK_ALLOW_PRIVATE:-false}
+      FLARE_BOOTSTRAP_PDNS_URL: http://pdns:8081
+      FLARE_BOOTSTRAP_PDNS_API_KEY: ${PDNS_API_KEY}
+      FLARE_BOOTSTRAP_PDNS_SERVER_ID: localhost
+      FLARE_SMTP_HOST: ${FLARE_SMTP_HOST:-}
+      FLARE_SMTP_PORT: ${FLARE_SMTP_PORT:-587}
+      FLARE_SMTP_USERNAME: ${FLARE_SMTP_USERNAME:-}
+      FLARE_SMTP_PASSWORD: ${FLARE_SMTP_PASSWORD:-}
+      FLARE_SMTP_FROM: ${FLARE_SMTP_FROM:-}
+      FLARE_SMTP_TLS: ${FLARE_SMTP_TLS:-starttls}
+    networks: [edge, data]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/flare", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    <<: *hardening
+    image: caddy:2-alpine
+    depends_on:
+      flare:
+        condition: service_healthy
+    environment:
+      FLARE_DOMAIN: ${FLARE_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required for TLS certificates}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+
+  backup:
+    <<: *hardening
+    image: postgres:17-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-flare}
+      POSTGRES_USER: ${POSTGRES_USER:-flare}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PDNS_DB_NAME: ${PDNS_DB_NAME:-pdns}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./deploy/postgres/backup.sh:/backup.sh:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    networks: [data]
+
+networks:
+  edge:
+  dns:
+  data:
+    internal: true
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

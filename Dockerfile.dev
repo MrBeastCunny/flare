@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1.7
+# Development images for Flare. Source code is bind-mounted; these images only
+# provide toolchains and live-reload tooling.
+
+# ---- API: Go with live reload (air) ----
+FROM golang:1.27-bookworm AS api
+ENV CGO_ENABLED=0 GOFLAGS=-buildvcs=false
+RUN go install github.com/air-verse/air@latest
+WORKDIR /src/server
+EXPOSE 8080
+CMD ["air", "-c", ".air.toml"]
+
+# ---- Web: Vite dev server with HMR ----
+FROM node:24-bookworm-slim AS web
+RUN corepack enable && corepack prepare pnpm@10.31.0 --activate
+WORKDIR /src/web
+EXPOSE 5173
+CMD ["sh", "-c", "pnpm install --frozen-lockfile && pnpm dev --host 0.0.0.0 --port 5173"]

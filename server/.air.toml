@@ -1,0 +1,17 @@
+root = "."
+tmp_dir = "/tmp/air"
+
+[build]
+  cmd = "go build -o /tmp/air/flare ./cmd/flare"
+  entrypoint = ["/tmp/air/flare", "serve"]
+  include_ext = ["go", "sql"]
+  exclude_dir = ["internal/web/dist"]
+  delay = 500
+  kill_delay = "2s"
+  send_interrupt = true
+
+[log]
+  time = false
+
+[misc]
+  clean_on_exit = true

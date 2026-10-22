@@ -1,0 +1,30 @@
+# Rendered at container start by pdns_server-startup (TEMPLATE_FILES=gpgsql).
+launch=gpgsql
+gpgsql-host={{ PDNS_GPGSQL_HOST }}
+gpgsql-port={{ PDNS_GPGSQL_PORT | default('5432') }}
+gpgsql-dbname={{ PDNS_GPGSQL_DBNAME }}
+gpgsql-user={{ PDNS_GPGSQL_USER }}
+gpgsql-password={{ PDNS_GPGSQL_PASSWORD }}
+gpgsql-dnssec=yes
+
+# Zone transfer & replication
+primary=yes
+secondary=yes
+allow-axfr-ips={{ PDNS_ALLOW_AXFR_IPS | default('127.0.0.0/8,::1') }}
+{% if PDNS_ALSO_NOTIFY %}also-notify={{ PDNS_ALSO_NOTIFY }}{% endif %}
+default-soa-edit=INCEPTION-INCREMENT
+default-ttl=3600
+
+# HTTP API used by Flare
+webserver-allow-from={{ PDNS_WEBSERVER_ALLOW_FROM | default('127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1') }}
+webserver-port=8081
+webserver-max-bodysize=10
+
+# Operations
+version-string=anonymous
+loglevel={{ PDNS_LOGLEVEL | default('4') }}
+log-dns-queries=no
+query-cache-ttl=20
+cache-ttl=20
+negquery-cache-ttl=60
+consistent-backends=yes
