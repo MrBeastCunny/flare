@@ -76,7 +76,7 @@ Flare covers what [PowerDNS-Admin](https://github.com/PowerDNS-Admin/PowerDNS-Ad
 ### Install
 
 ```bash
-git clone <your fork> flare && cd flare
+git clone https://github.com/MrBeastCunny/flare && cd flare
 cp .env.example .env
 # Fill in FLARE_DOMAIN, ACME_EMAIL and the four secrets:
 #   openssl rand -base64 48
