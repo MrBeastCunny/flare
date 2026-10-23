@@ -34,7 +34,7 @@ function VirtualMenuItems({ items }: { items: MenuItem[] }) {
   });
   const height = Math.min(virtualizer.getTotalSize(), 360);
   return (
-    <div ref={ref} className="overflow-y-auto" style={{ height }} role="presentation">
+    <div ref={ref} className="-mx-1 overflow-x-hidden overflow-y-auto px-1" style={{ height }} role="presentation">
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map((vi) => {
           const it = items[vi.index];

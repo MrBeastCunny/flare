@@ -236,7 +236,7 @@ export function VirtualSelect<V extends string | number = string>(props: SingleP
                 tabIndex={searchable ? -1 : 0}
                 onKeyDown={searchable ? undefined : onKeyDown}
                 aria-activedescendant={!searchable && filtered[active] ? `${id}-opt-${active}` : undefined}
-                className="overflow-y-auto p-1 outline-none"
+                className="overflow-x-hidden overflow-y-auto p-1 outline-none"
                 style={{ height: filtered.length === 0 ? undefined : listHeight + 8, maxHeight: 328 }}
               >
                 {filtered.length === 0 ? (

@@ -141,7 +141,7 @@ export function CommandMenu({ open, onOpenChange, orgId }: { open: boolean; onOp
           />
           {search.isFetching && <Loader size="sm" />}
         </div>
-        <div ref={listRef} id="command-list" role="listbox" className="overflow-y-auto p-2" style={{ height: 380 }}>
+        <div ref={listRef} id="command-list" role="listbox" className="overflow-x-hidden overflow-y-auto p-2" style={{ height: 380 }}>
           {items.length === 0 ? (
             <div className="px-3 py-10 text-center text-kumo-subtle">{q.length < 2 ? "Type to search" : "No results"}</div>
           ) : (
