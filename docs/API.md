@@ -140,6 +140,8 @@ Requests are rate limited per token or session (600 burst, 1200 per minute).
 
 The zone's own (apex) NS records follow its nameserver set and cannot be created, edited or deleted as records; use `POST /{zoneID}/nameservers`. NS records for subdomain delegations are ordinary records. Imports and templates skip apex NS and SOA records.
 
+Hostnames in record content (CNAME, MX, NS, SRV and similar targets) are absolute when they contain a dot, with or without a trailing dot: `casca.example.net` stays `casca.example.net.`. A single label such as `www`, or `@`, is relative to the zone. Zone file imports and templates use zone file rules instead, where any name without a trailing dot is relative.
+
 Record IDs are opaque and change when a record's name, type or content changes. A `409 stale_record` response means someone else changed the record first.
 
 ## Instance administration `/admin` (instance administrators)

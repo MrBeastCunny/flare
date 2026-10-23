@@ -55,7 +55,7 @@ func validateTemplate(in *templateInput) error {
 		if rec.TTL <= 0 {
 			rec.TTL = 3600
 		}
-		if _, err := dnsutil.NormalizeContent(probe, fq, rec.Type, rec.TTL, rec.Content); err != nil {
+		if _, err := dnsutil.NormalizeContent(probe, fq, rec.Type, rec.TTL, dnsutil.ExpandRelativeTargets(probe, rec.Type, rec.Content)); err != nil {
 			return errField(fmt.Sprintf("records.%d.content", i), fmt.Sprintf("%s %s: %s", rec.Type, rec.Name, err.Error()))
 		}
 	}
@@ -243,7 +243,7 @@ func (a *App) handleApplyTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	recs := make([]dnsutil.ParsedRR, 0, len(t.Records))
 	for _, rec := range t.Records {
-		recs = append(recs, dnsutil.ParsedRR{Name: rec.Name, Type: rec.Type, TTL: rec.TTL, Content: rec.Content})
+		recs = append(recs, dnsutil.ParsedRR{Name: rec.Name, Type: rec.Type, TTL: rec.TTL, Content: dnsutil.ExpandRelativeTargets(z.Name, rec.Type, rec.Content)})
 	}
 	sets, err := a.buildImportRRSets(z.Name, recs, orInt(a.Settings(ctx).DefaultTTL, 3600), true)
 	if err != nil {

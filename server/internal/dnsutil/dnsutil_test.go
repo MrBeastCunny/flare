@@ -57,6 +57,17 @@ func TestNormalizeContent(t *testing.T) {
 		{"AAAA", "2001:DB8::1", "2001:db8::1"},
 		{"CNAME", "www", "www.example.com."},
 		{"CNAME", "target.example.net.", "target.example.net."},
+		{"CNAME", "casca.srv.varesa.moe", "casca.srv.varesa.moe."},
+		{"CNAME", "Target.Example.NET", "Target.Example.NET."},
+		{"CNAME", "@", "example.com."},
+		{"MX", "10 mail.example.net", "10 mail.example.net."},
+		{"MX", "10   mx.example.net", "10 mx.example.net."},
+		{"NS", "ns1.example.net", "ns1.example.net."},
+		{"PTR", "host.example.net", "host.example.net."},
+		{"SRV", "10 60 5060 sip.example.net", "10 60 5060 sip.example.net."},
+		{"SRV", "10 60 5060 sip", "10 60 5060 sip.example.com."},
+		{"HTTPS", "1 svc.example.net alpn=h2", "1 svc.example.net. alpn=\"h2\""},
+		{"NAPTR", `100 10 "u" "E2U+sip" "!^.*$!sip:info@example.net!" .`, `100 10 "u" "E2U+sip" "!^.*$!sip:info@example.net!" .`},
 		{"MX", "10 mail", "10 mail.example.com."},
 		{"TXT", "v=spf1 -all", `"v=spf1 -all"`},
 		{"TXT", `"already quoted"`, `"already quoted"`},
@@ -180,6 +191,24 @@ func TestIsUnroutable(t *testing.T) {
 	} {
 		if got := IsUnroutable(netip.MustParseAddr(ip)); got != want {
 			t.Errorf("IsUnroutable(%s) = %v, want %v", ip, got, want)
+		}
+	}
+}
+
+func TestExpandRelativeTargets(t *testing.T) {
+	zone := "example.com."
+	for _, c := range []struct{ typ, in, want string }{
+		{"CNAME", "cdn.www", "cdn.www.example.com."},
+		{"CNAME", "www", "www.example.com."},
+		{"CNAME", "@", "example.com."},
+		{"CNAME", "target.example.net.", "target.example.net."},
+		{"MX", "10 mail", "10 mail.example.com."},
+		{"SRV", "10 60 5060 sip.edge", "10 60 5060 sip.edge.example.com."},
+		{"ALIAS", "lb", "lb.example.com."},
+		{"TXT", "v=spf1 -all", "v=spf1 -all"},
+	} {
+		if got := ExpandRelativeTargets(zone, c.typ, c.in); got != c.want {
+			t.Errorf("ExpandRelativeTargets(%s %q) = %q, want %q", c.typ, c.in, got, c.want)
 		}
 	}
 }

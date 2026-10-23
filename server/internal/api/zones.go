@@ -188,7 +188,7 @@ func (a *App) createZone(r *http.Request, in createZoneRequest) (*createZoneResu
 			return nil, errField("template_id", "Template not found")
 		}
 		for _, rec := range t.Records {
-			in.Records = append(in.Records, dnsutil.ParsedRR{Name: rec.Name, Type: rec.Type, TTL: rec.TTL, Content: rec.Content})
+			in.Records = append(in.Records, dnsutil.ParsedRR{Name: rec.Name, Type: rec.Type, TTL: rec.TTL, Content: dnsutil.ExpandRelativeTargets(name, rec.Type, rec.Content)})
 		}
 	}
 

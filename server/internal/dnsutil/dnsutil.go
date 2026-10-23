@@ -178,6 +178,7 @@ func NormalizeContent(zone, name, typ string, ttl int, content string) (string, 
 	if ttl <= 0 {
 		ttl = 3600
 	}
+	content = qualifyTargets(zone, typ, content, false)
 	line := fmt.Sprintf("%s %d IN %s %s", name, ttl, typ, content)
 	zp := dns.NewZoneParser(strings.NewReader(line), zone, "")
 	rr, ok := zp.Next()
@@ -189,6 +190,58 @@ func NormalizeContent(zone, name, typ string, ttl int, content string) (string, 
 	}
 	out := strings.TrimPrefix(rr.String(), rr.Header().String())
 	return strings.TrimSpace(out), nil
+}
+
+// targetFields maps record types to the positions of hostname fields in their content.
+var targetFields = map[string][]int{
+	"CNAME": {0}, "DNAME": {0}, "NS": {0}, "PTR": {0}, "MX": {1}, "SRV": {3}, "AFSDB": {1},
+	"KX": {1}, "LP": {1}, "RP": {0, 1}, "SVCB": {1}, "HTTPS": {1}, "NAPTR": {-1}, "ALIAS": {0},
+}
+
+// ExpandRelativeTargets resolves hostnames in zone template content with zone file rules: anything
+// without a trailing dot is relative to zone, so "cdn.www" becomes "cdn.www.<zone>".
+func ExpandRelativeTargets(zone, typ, content string) string {
+	return qualifyTargets(zone, strings.ToUpper(typ), strings.TrimSpace(content), true)
+}
+
+// qualifyTargets makes hostnames in content absolute. By default it follows how people type them in
+// a form rather than zone file rules: "target.example.net" means exactly that, not
+// "target.example.net.<zone>", and only a single label such as "www" or "@" stays relative to the
+// zone. With relative set, every name without a trailing dot is relative to the zone.
+func qualifyTargets(zone, typ, content string, relative bool) string {
+	idx, ok := targetFields[typ]
+	if !ok {
+		return content
+	}
+	fields := strings.Fields(content)
+	if typ == "NAPTR" {
+		// Only the replacement is changed; earlier fields may be quoted strings with spaces.
+		if len(fields) == 0 {
+			return content
+		}
+		last := fields[len(fields)-1]
+		return strings.TrimSuffix(content, last) + qualifyHost(zone, last, relative)
+	}
+	for _, i := range idx {
+		if i < len(fields) {
+			fields[i] = qualifyHost(zone, fields[i], relative)
+		}
+	}
+	return strings.Join(fields, " ")
+}
+
+func qualifyHost(zone, h string, relative bool) string {
+	switch {
+	case h == "." || strings.HasSuffix(h, "."):
+		return h
+	case relative && h == "@":
+		return dns.Fqdn(zone)
+	case relative:
+		return h + "." + dns.Fqdn(zone)
+	case h == "@" || !strings.Contains(h, "."):
+		return h
+	}
+	return h + "."
 }
 
 func cleanParseErr(err error) error {
