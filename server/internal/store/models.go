@@ -152,20 +152,24 @@ type Zone struct {
 }
 
 type APIToken struct {
-	ID          uuid.UUID   `json:"id"`
-	OrgID       uuid.UUID   `json:"org_id"`
-	Name        string      `json:"name"`
-	Prefix      string      `json:"prefix"`
-	Role        string      `json:"role"`
-	ZoneIDs     []uuid.UUID `json:"zone_ids"`
-	IPAllowlist []string    `json:"ip_allowlist"`
-	CreatedBy   *uuid.UUID  `json:"created_by"`
-	CreatorName string      `json:"creator_name,omitempty"`
-	ExpiresAt   *time.Time  `json:"expires_at"`
-	LastUsedAt  *time.Time  `json:"last_used_at"`
-	LastUsedIP  string      `json:"last_used_ip"`
-	RevokedAt   *time.Time  `json:"revoked_at"`
-	CreatedAt   time.Time   `json:"created_at"`
+	ID    uuid.UUID  `json:"id"`
+	OrgID *uuid.UUID `json:"org_id"` // nil for a global token
+	// OrgIDs limits a global token to some organizations; nil means every organization.
+	OrgIDs []uuid.UUID `json:"org_ids"`
+	// InstanceRole grants a global token access to the admin API: none, orgs or admin.
+	InstanceRole string      `json:"instance_role"`
+	Name         string      `json:"name"`
+	Prefix       string      `json:"prefix"`
+	Role         string      `json:"role"`
+	ZoneIDs      []uuid.UUID `json:"zone_ids"`
+	IPAllowlist  []string    `json:"ip_allowlist"`
+	CreatedBy    *uuid.UUID  `json:"created_by"`
+	CreatorName  string      `json:"creator_name,omitempty"`
+	ExpiresAt    *time.Time  `json:"expires_at"`
+	LastUsedAt   *time.Time  `json:"last_used_at"`
+	LastUsedIP   string      `json:"last_used_ip"`
+	RevokedAt    *time.Time  `json:"revoked_at"`
+	CreatedAt    time.Time   `json:"created_at"`
 }
 
 type RoleMapping struct {

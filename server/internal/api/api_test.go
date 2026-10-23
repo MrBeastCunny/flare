@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -33,7 +36,79 @@ func TestRolePermissions(t *testing.T) {
 	}
 	for _, p := range []Perm{PermMembersManage, PermSSOManage, PermTokensManage, PermOrgUpdate, PermOrgDelete} {
 		if has("admin", true, p) {
-			t.Errorf("API tokens must never get %s", p)
+			t.Errorf("zone admin tokens must not get %s", p)
+		}
+	}
+	for role := range tokenRolePerms {
+		for _, p := range []Perm{PermSSOManage, PermTokensManage, PermOrgDelete} {
+			if has(role, true, p) {
+				t.Errorf("%s tokens must never get %s", role, p)
+			}
+		}
+	}
+	for _, p := range []Perm{PermOrgUpdate, PermMembersManage, PermWebhooksManage, PermZonesDelete, PermDNSEdit} {
+		if !has("org_admin", true, p) {
+			t.Errorf("organization admin tokens need %s", p)
+		}
+	}
+}
+
+func TestTokenScope(t *testing.T) {
+	o1, o2 := &store.Org{ID: uuid.New()}, &store.Org{ID: uuid.New()}
+	orgTok := &store.APIToken{OrgID: &o1.ID, Role: "editor"}
+	if _, err := tokenScope(orgTok, o1); err != nil {
+		t.Error("organization token must work in its organization")
+	}
+	if _, err := tokenScope(orgTok, o2); err == nil {
+		t.Error("organization token must not reach another organization")
+	}
+	all := &store.APIToken{Role: "viewer", InstanceRole: "none"}
+	if _, err := tokenScope(all, o1); err != nil {
+		t.Error("global token without org_ids reaches every organization")
+	}
+	some := &store.APIToken{Role: "viewer", OrgIDs: []uuid.UUID{o1.ID}}
+	if _, err := tokenScope(some, o1); err != nil {
+		t.Error("scoped global token must reach listed organizations")
+	}
+	if _, err := tokenScope(some, o2); err == nil {
+		t.Error("scoped global token must not reach other organizations")
+	}
+	suspended := &store.Org{ID: uuid.New(), Suspended: true}
+	if _, err := tokenScope(all, suspended); err == nil {
+		t.Error("suspended organizations block ordinary global tokens")
+	}
+	if _, err := tokenScope(&store.APIToken{Role: "viewer", InstanceRole: "admin"}, suspended); err != nil {
+		t.Error("full administrator tokens reach suspended organizations, like instance administrators")
+	}
+	if tokenInstanceAdmin(&store.APIToken{OrgID: &o1.ID, InstanceRole: "admin"}) {
+		t.Error("organization tokens never have instance access")
+	}
+}
+
+func TestRequireInstance(t *testing.T) {
+	a := &App{Log: slog.New(slog.DiscardHandler)}
+	o := uuid.New()
+	cases := []struct {
+		name  string
+		act   *Actor
+		level string
+		want  int
+	}{
+		{"superadmin", &Actor{Type: "user", User: &store.User{IsSuperadmin: true}}, "admin", 200},
+		{"user", &Actor{Type: "user", User: &store.User{}}, "orgs", 403},
+		{"orgs token on org routes", &Actor{Type: "api_token", Token: &store.APIToken{InstanceRole: "orgs"}}, "orgs", 200},
+		{"orgs token on admin routes", &Actor{Type: "api_token", Token: &store.APIToken{InstanceRole: "orgs"}}, "admin", 403},
+		{"admin token", &Actor{Type: "api_token", Token: &store.APIToken{InstanceRole: "admin"}}, "admin", 200},
+		{"no instance access", &Actor{Type: "api_token", Token: &store.APIToken{InstanceRole: "none"}}, "orgs", 403},
+		{"organization token", &Actor{Type: "api_token", Token: &store.APIToken{OrgID: &o, InstanceRole: "admin"}}, "orgs", 403},
+	}
+	for _, c := range cases {
+		h := a.RequireInstance(c.level)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/", nil)
+		h.ServeHTTP(rec, req.WithContext(context.WithValue(req.Context(), keyActor, c.act)))
+		if rec.Code != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, rec.Code, c.want)
 		}
 	}
 }

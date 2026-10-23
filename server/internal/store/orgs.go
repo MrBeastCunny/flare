@@ -26,6 +26,24 @@ func (s *Store) OrgByID(ctx context.Context, id uuid.UUID) (*Org, error) {
 	return &o, nil
 }
 
+// OrgsByIDs returns organizations ordered by name; nil ids returns every organization.
+func (s *Store) OrgsByIDs(ctx context.Context, ids []uuid.UUID) ([]Org, error) {
+	rows, err := s.q.Query(ctx, `SELECT `+orgCols+` FROM organizations WHERE $1::uuid[] IS NULL OR id = ANY($1) ORDER BY lower(name)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Org{}
+	for rows.Next() {
+		var o Org
+		if err := scanOrgInto(rows, &o); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) OrgBySlug(ctx context.Context, slug string) (*Org, error) {
 	var o Org
 	if err := scanOrgInto(s.q.QueryRow(ctx, `SELECT `+orgCols+` FROM organizations WHERE slug = $1`, slug), &o); err != nil {
@@ -224,7 +242,7 @@ func scanInvite(row pgx.Row) (*Invitation, error) {
 }
 
 func (s *Store) CreateInvitation(ctx context.Context, orgID uuid.UUID, email, role string, zoneIDs []uuid.UUID,
-	tokenHash []byte, invitedBy uuid.UUID) (*Invitation, error) {
+	tokenHash []byte, invitedBy *uuid.UUID) (*Invitation, error) {
 	// Replace any pending invitation for the same address.
 	if _, err := s.q.Exec(ctx, `DELETE FROM invitations WHERE org_id = $1 AND email = $2 AND accepted_at IS NULL`, orgID, email); err != nil {
 		return nil, err

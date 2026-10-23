@@ -4,7 +4,7 @@ Base path: `/api/v1`. Request and response bodies are JSON.
 
 **Authentication**
 - Browser sessions use the `flare_session` cookie. State-changing requests must send the `X-CSRF-Token` header with the value of the `flare_csrf` cookie.
-- Automation uses `Authorization: Bearer <api token>`. Tokens are bound to one organization.
+- Automation uses `Authorization: Bearer <api token>`. Organization tokens are bound to one organization. Global tokens, created by instance administrators, work in all or selected organizations and can be given access to the admin API.
 
 **Errors**: `{"error": {"code": "...", "message": "...", "fields": {"field": "message"}}}`
 
@@ -59,7 +59,8 @@ Requests are rate limited per token or session (600 burst, 1200 per minute).
 | POST | `/me/sessions/revoke-others` | Sign out every other session |
 | POST | `/me/onboarding/complete` | Mark onboarding done |
 | POST | `/orgs` | Create an organization `{name}` |
-| GET | `/tokens/verify` | (token only) Describe the calling API token |
+| GET | `/orgs` | (sessions and tokens) Organizations the caller can use, with its role in each |
+| GET | `/tokens/verify` | (token only) Describe the calling API token, including `global`, `org_ids` and `instance_role` |
 
 ## Organization `/orgs/{orgID}`
 
@@ -78,7 +79,7 @@ Requests are rate limited per token or session (600 burst, 1200 per minute).
 | GET, POST | `/invites` | members.manage | List, or create `{emails[], role, zone_ids?}` |
 | POST | `/invites/{id}/resend` | members.manage | Re-send with a fresh link |
 | DELETE | `/invites/{id}` | members.manage | Revoke |
-| GET, POST | `/tokens` | tokens.manage | List, or create `{name, role, zone_ids?, ip_allowlist?, expires_in_days?}` |
+| GET, POST | `/tokens` | tokens.manage | List, or create `{name, role, zone_ids?, ip_allowlist?, expires_in_days?}`. `role` is `viewer`, `editor`, `admin` (zone admin) or `org_admin` |
 | POST | `/tokens/{id}/roll` | tokens.manage | Rotate the secret |
 | DELETE | `/tokens/{id}` | tokens.manage | Revoke |
 | GET, PUT, DELETE | `/sso` | sso.manage | OIDC connection |
@@ -146,8 +147,13 @@ Record IDs are opaque and change when a record's name, type or content changes. 
 
 ## Instance administration `/admin` (instance administrators)
 
+Global API tokens can call `/admin` too, depending on their instance access: `orgs` (Manage organizations) reaches the organization endpoints, `admin` (Full administrator) reaches every endpoint except `/tokens` and `/settings/test-email`, which need a signed-in administrator.
+
 | Method | Path | Description |
 | --- | --- | --- |
+| GET, POST | `/tokens` | (signed-in administrators) Global API tokens; create `{name, role, org_ids?, instance_role?, ip_allowlist?, expires_in_days?}`. Empty `org_ids` means every organization; `instance_role` is `none`, `orgs` or `admin` |
+| POST | `/tokens/{id}/roll` | (signed-in administrators) Rotate a global token's secret |
+| DELETE | `/tokens/{id}` | (signed-in administrators) Revoke a global token |
 | GET | `/overview` | Platform statistics |
 | GET, POST | `/servers` | PowerDNS servers |
 | POST | `/servers/test` | Test connection details |
@@ -169,7 +175,7 @@ Record IDs are opaque and change when a record's name, type or content changes. 
 | POST | `/users` | `{email, name?, password?, is_superadmin?, send_email?}`; without a password, returns a 7-day `setup_url` |
 | PATCH | `/users/{id}` | `{email?, name?, is_superadmin?, disabled?, reset_mfa?, logout?}` |
 | DELETE | `/users/{id}` | Delete a user |
-| GET, POST | `/orgs` | Organizations; create `{name, owner_email?}` |
+| GET, POST | `/orgs` | Organizations; create `{name, owner_email?}`. `owner_email` defaults to the signed-in administrator and is required for API tokens |
 | PATCH | `/orgs/{id}` | `{max_zones, nameserver_set_id, pdns_server_id, suspended}` |
 | GET | `/zones` | All zones |
 | GET | `/audit-logs`, `/audit-logs/export` | Instance-wide audit log |
@@ -181,7 +187,7 @@ Authenticate with a Flare API token in `X-API-Key` (or `Authorization: Bearer`).
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/servers`, `/servers/localhost` | Server information |
-| GET, POST | `/servers/localhost/zones` | Zones the token can see; create a zone (`zones.create`) |
+| GET, POST | `/servers/localhost/zones` | Zones the token can see; create a zone (`zones.create`). For global tokens, zones from every organization in scope are listed with the organization slug in `account`, and creating a zone needs `account` (organization slug or ID) unless the token is limited to one organization |
 | GET, PATCH, DELETE | `/servers/localhost/zones/{zone}` | Zone with RRsets; PATCH `{rrsets: [{name, type, ttl, changetype: REPLACE or DELETE, records}]}` |
 | GET | `/servers/localhost/zones/{zone}/export` | BIND zone file |
 | PUT | `/servers/localhost/zones/{zone}/{notify,rectify,axfr-retrieve}` | Server operations |

@@ -212,6 +212,7 @@ export function AppShell() {
     { label: "Users", icon: UserListIcon, to: "/admin/users" },
     { label: "All zones", icon: GlobeHemisphereWestIcon, to: "/admin/zones" },
     { label: "Zone templates", icon: CopySimpleIcon, to: "/admin/templates" },
+    { label: "API tokens", icon: KeyIcon, to: "/admin/api-tokens" },
     { label: "Audit log", icon: ClockCounterClockwiseIcon, to: "/admin/audit-log" },
     { label: "Settings", icon: GearSixIcon, to: "/admin/settings" },
   ];

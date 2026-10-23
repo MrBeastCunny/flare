@@ -48,14 +48,55 @@ func (a *App) handleDynDNS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = a.Store.TouchAPIToken(ctx, tok.ID, a.clientIP(r))
-	org, err := a.Store.OrgByID(ctx, tok.OrgID)
-	if err != nil || org.Suspended {
-		reply(403, "badauth")
-		return
-	}
-	act := &Actor{Type: "api_token", Token: tok, OrgID: &tok.OrgID, ID: &tok.ID, Label: "API token: " + tok.Name + " (DynDNS)"}
-	ctx = withOrg(context.WithValue(ctx, keyActor, act), org, &access{Role: tok.Role, ZoneIDs: tok.ZoneIDs})
+	act := &Actor{Type: "api_token", Token: tok, OrgID: tok.OrgID, ID: &tok.ID, Label: "API token: " + tok.Name + " (DynDNS)"}
+	ctx = context.WithValue(ctx, keyActor, act)
 	r = r.WithContext(ctx)
+
+	// findZone returns the zone hosting fq and the request scoped to that zone's organization.
+	var findZone func(fq string) (*store.Zone, *http.Request)
+	if tok.OrgID != nil {
+		org, err := a.Store.OrgByID(ctx, *tok.OrgID)
+		if err != nil || org.Suspended {
+			reply(403, "badauth")
+			return
+		}
+		zones, err := a.Store.ListZones(ctx, org.ID, tok.ZoneIDs)
+		if err != nil {
+			reply(500, "911")
+			return
+		}
+		scoped := r.WithContext(withOrg(ctx, org, &access{Role: tok.Role, ZoneIDs: tok.ZoneIDs}))
+		findZone = func(fq string) (*store.Zone, *http.Request) {
+			var zone *store.Zone
+			for i := range zones {
+				z := &zones[i]
+				if (fq == z.Name || strings.HasSuffix(fq, "."+z.Name)) && (zone == nil || len(z.Name) > len(zone.Name)) {
+					zone = z
+				}
+			}
+			return zone, scoped
+		}
+	} else {
+		// Global tokens: the closest enclosing zone on the instance, if the token may use its organization.
+		findZone = func(fq string) (*store.Zone, *http.Request) {
+			for name := fq; strings.Contains(strings.TrimSuffix(name, "."), "."); name = name[strings.Index(name, ".")+1:] {
+				z, err := a.Store.ZoneByName(ctx, name)
+				if err != nil {
+					continue
+				}
+				org, err := a.Store.OrgByID(ctx, z.OrgID)
+				if err != nil {
+					return nil, nil
+				}
+				acc, err := tokenScope(tok, org)
+				if err != nil {
+					return nil, nil
+				}
+				return z, r.WithContext(withOrg(ctx, org, acc))
+			}
+			return nil, nil
+		}
+	}
 
 	q := r.URL.Query()
 	ips := cleanList(append(strings.Split(q.Get("myip"), ","), strings.Split(q.Get("myipv6"), ",")...))
@@ -75,11 +116,6 @@ func (a *App) handleDynDNS(w http.ResponseWriter, r *http.Request) {
 			v6 = ip.String()
 		}
 	}
-	zones, err := a.Store.ListZones(ctx, org.ID, tok.ZoneIDs)
-	if err != nil {
-		reply(500, "911")
-		return
-	}
 	ttl := orInt(a.Settings(ctx).DynDNSTTL, 60)
 	var lines []string
 	for _, host := range cleanList(strings.Split(q.Get("hostname"), ",")) {
@@ -88,18 +124,12 @@ func (a *App) handleDynDNS(w http.ResponseWriter, r *http.Request) {
 			lines = append(lines, "notfqdn")
 			continue
 		}
-		var zone *store.Zone
-		for i := range zones {
-			z := &zones[i]
-			if (fq == z.Name || strings.HasSuffix(fq, "."+z.Name)) && (zone == nil || len(z.Name) > len(zone.Name)) {
-				zone = z
-			}
-		}
+		zone, zr := findZone(fq)
 		if zone == nil || zone.Kind == "Slave" {
 			lines = append(lines, "nohost")
 			continue
 		}
-		res, err := a.dynUpdate(r, zone, fq, v4, v6, ttl)
+		res, err := a.dynUpdate(zr, zone, fq, v4, v6, ttl)
 		if err != nil {
 			a.Log.Warn("dyndns update failed", "host", fq, "err", err)
 			lines = append(lines, "dnserr")

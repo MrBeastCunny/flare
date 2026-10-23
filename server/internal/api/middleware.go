@@ -158,7 +158,7 @@ func (a *App) Authenticate(next http.Handler) http.Handler {
 				return
 			}
 			_ = a.Store.TouchAPIToken(ctx, tok.ID, ip)
-			act := &Actor{Type: "api_token", Token: tok, OrgID: &tok.OrgID, ID: &tok.ID, Label: "API token: " + tok.Name}
+			act := &Actor{Type: "api_token", Token: tok, OrgID: tok.OrgID, ID: &tok.ID, Label: "API token: " + tok.Name}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, keyActor, act)))
 			return
 		}
@@ -235,6 +235,23 @@ func (a *App) RequireActor(next http.Handler) http.Handler {
 	})
 }
 
+// RequireInstance allows instance administrators, and global API tokens whose instance role is at
+// least level ("orgs" or "admin").
+func (a *App) RequireInstance(level string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			act := actorFrom(r.Context())
+			ok := act != nil && ((act.Type == "user" && act.User.IsSuperadmin) ||
+				(act.Type == "api_token" && act.Token.OrgID == nil && instanceRoleRank[act.Token.InstanceRole] >= instanceRoleRank[level]))
+			if !ok {
+				a.fail(w, r, errForbidden("Instance administrator access is required."))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func (a *App) RequireSuperadmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		act := actorFrom(r.Context())
@@ -264,11 +281,10 @@ func (a *App) LoadOrg(next http.Handler) http.Handler {
 		var acc *access
 		switch act.Type {
 		case "api_token":
-			if *act.OrgID != org.ID {
-				a.fail(w, r, errNotFound("Organization"))
+			if acc, err = a.tokenAccess(r, act.Token, org); err != nil {
+				a.fail(w, r, err)
 				return
 			}
-			acc = &access{Role: act.Token.Role, ZoneIDs: act.Token.ZoneIDs}
 		case "user":
 			m, err := a.Store.Membership(ctx, org.ID, act.User.ID)
 			if err == nil && m.Suspended && !act.User.IsSuperadmin {
@@ -290,7 +306,7 @@ func (a *App) LoadOrg(next http.Handler) http.Handler {
 			return
 		}
 
-		superadmin := act.Type == "user" && act.User.IsSuperadmin
+		superadmin := (act.Type == "user" && act.User.IsSuperadmin) || (act.Type == "api_token" && tokenInstanceAdmin(act.Token))
 		if org.Suspended && !superadmin {
 			a.fail(w, r, errCode(403, "org_suspended", "This organization has been suspended. Contact your administrator."))
 			return

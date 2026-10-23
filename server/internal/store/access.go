@@ -12,12 +12,12 @@ import (
 
 // ---- API tokens ----
 
-const tokenCols = `t.id, t.org_id, t.name, t.prefix, t.role, t.zone_ids, t.ip_allowlist, t.created_by,
+const tokenCols = `t.id, t.org_id, t.org_ids, t.instance_role, t.name, t.prefix, t.role, t.zone_ids, t.ip_allowlist, t.created_by,
 	COALESCE(NULLIF(u.name,''), u.email::text, ''), t.expires_at, t.last_used_at, t.last_used_ip, t.revoked_at, t.created_at`
 
 func scanToken(row pgx.Row) (*APIToken, error) {
 	var t APIToken
-	err := row.Scan(&t.ID, &t.OrgID, &t.Name, &t.Prefix, &t.Role, &t.ZoneIDs, &t.IPAllowlist, &t.CreatedBy, &t.CreatorName,
+	err := row.Scan(&t.ID, &t.OrgID, &t.OrgIDs, &t.InstanceRole, &t.Name, &t.Prefix, &t.Role, &t.ZoneIDs, &t.IPAllowlist, &t.CreatedBy, &t.CreatorName,
 		&t.ExpiresAt, &t.LastUsedAt, &t.LastUsedIP, &t.RevokedAt, &t.CreatedAt)
 	if err != nil {
 		return nil, db.NotFound(err)
@@ -29,18 +29,30 @@ func (s *Store) CreateAPIToken(ctx context.Context, t APIToken, tokenHash []byte
 	if t.IPAllowlist == nil {
 		t.IPAllowlist = []string{}
 	}
+	if t.InstanceRole == "" {
+		t.InstanceRole = "none"
+	}
 	var id uuid.UUID
-	if err := s.q.QueryRow(ctx, `INSERT INTO api_tokens(org_id, name, prefix, token_hash, role, zone_ids, ip_allowlist, created_by, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, t.OrgID, t.Name, t.Prefix, tokenHash, t.Role, t.ZoneIDs, t.IPAllowlist,
-		t.CreatedBy, t.ExpiresAt).Scan(&id); err != nil {
+	if err := s.q.QueryRow(ctx, `INSERT INTO api_tokens(org_id, org_ids, instance_role, name, prefix, token_hash, role, zone_ids,
+		ip_allowlist, created_by, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, t.OrgID, t.OrgIDs, t.InstanceRole,
+		t.Name, t.Prefix, tokenHash, t.Role, t.ZoneIDs, t.IPAllowlist, t.CreatedBy, t.ExpiresAt).Scan(&id); err != nil {
 		return nil, err
 	}
 	return scanToken(s.q.QueryRow(ctx, `SELECT `+tokenCols+` FROM api_tokens t LEFT JOIN users u ON u.id = t.created_by WHERE t.id = $1`, id))
 }
 
 func (s *Store) ListAPITokens(ctx context.Context, orgID uuid.UUID) ([]APIToken, error) {
+	return s.listTokens(ctx, `t.org_id = $1`, orgID)
+}
+
+// ListGlobalAPITokens returns the active tokens that are not owned by an organization.
+func (s *Store) ListGlobalAPITokens(ctx context.Context) ([]APIToken, error) {
+	return s.listTokens(ctx, `t.org_id IS NULL`)
+}
+
+func (s *Store) listTokens(ctx context.Context, where string, args ...any) ([]APIToken, error) {
 	rows, err := s.q.Query(ctx, `SELECT `+tokenCols+` FROM api_tokens t LEFT JOIN users u ON u.id = t.created_by
-		WHERE t.org_id = $1 AND t.revoked_at IS NULL ORDER BY t.created_at DESC`, orgID)
+		WHERE `+where+` AND t.revoked_at IS NULL ORDER BY t.created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +76,17 @@ func (s *Store) APITokenByHash(ctx context.Context, hash []byte) (*APIToken, err
 func (s *Store) APITokenByID(ctx context.Context, orgID, id uuid.UUID) (*APIToken, error) {
 	return scanToken(s.q.QueryRow(ctx, `SELECT `+tokenCols+` FROM api_tokens t LEFT JOIN users u ON u.id = t.created_by
 		WHERE t.org_id = $1 AND t.id = $2`, orgID, id))
+}
+
+// GlobalAPITokenByID returns a token that is not owned by an organization.
+func (s *Store) GlobalAPITokenByID(ctx context.Context, id uuid.UUID) (*APIToken, error) {
+	return scanToken(s.q.QueryRow(ctx, `SELECT `+tokenCols+` FROM api_tokens t LEFT JOIN users u ON u.id = t.created_by
+		WHERE t.org_id IS NULL AND t.id = $1`, id))
+}
+
+func (s *Store) RevokeGlobalAPIToken(ctx context.Context, id uuid.UUID) (bool, error) {
+	tag, err := s.q.Exec(ctx, `UPDATE api_tokens SET revoked_at = now() WHERE org_id IS NULL AND id = $1 AND revoked_at IS NULL`, id)
+	return tag.RowsAffected() > 0, err
 }
 
 func (s *Store) TouchAPIToken(ctx context.Context, id uuid.UUID, ip string) error {

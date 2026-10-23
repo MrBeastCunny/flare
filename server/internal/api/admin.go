@@ -391,7 +391,6 @@ func (a *App) handleAdoptZones(w http.ResponseWriter, r *http.Request) {
 	}
 	adopted := 0
 	var failures []string
-	act := actorFrom(ctx)
 	for _, name := range in.Zones {
 		pz, err := c.GetZone(ctx, name, true)
 		if err != nil {
@@ -415,7 +414,7 @@ func (a *App) handleAdoptZones(w http.ResponseWriter, r *http.Request) {
 			status = "active"
 		}
 		z, err := a.Store.CreateZone(ctx, store.NewZone{OrgID: org.ID, PDNSServerID: srv.ID, NameserverSetID: setID, Name: pz.Name,
-			Kind: pz.Kind, Status: status, Nameservers: ns, CreatedBy: &act.User.ID})
+			Kind: pz.Kind, Status: status, Nameservers: ns, CreatedBy: actorUserID(ctx)})
 		if err != nil {
 			failures = append(failures, name+": "+err.Error())
 			continue
@@ -988,7 +987,7 @@ func (a *App) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if in.Disabled != nil {
 		disabled = *in.Disabled
 	}
-	if u.ID == act.User.ID && (!super || disabled) {
+	if act.Type == "user" && u.ID == act.User.ID && (!super || disabled) {
 		a.fail(w, r, errConflict("You cannot remove your own administrator access or disable yourself."))
 		return
 	}
@@ -1133,7 +1132,7 @@ func (a *App) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, errNotFound("User"))
 		return
 	}
-	if id == act.User.ID {
+	if act.Type == "user" && id == act.User.ID {
 		a.fail(w, r, errConflict("Delete your own account from your profile instead."))
 		return
 	}
@@ -1196,8 +1195,11 @@ func (a *App) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		owner = u
+	} else if act := actorFrom(ctx); act.Type == "user" {
+		owner = act.User
 	} else {
-		owner = actorFrom(ctx).User
+		a.fail(w, r, errField("owner_email", "Enter the email of an existing user to own the organization."))
+		return
 	}
 	var org *store.Org
 	err := a.Store.Tx(ctx, func(tx *store.Store) error {

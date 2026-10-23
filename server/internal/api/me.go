@@ -743,14 +743,14 @@ func (a *App) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		token := secure.RandomToken(32)
-		inv, err := a.Store.CreateInvitation(ctx, org.ID, email, in.Role, in.ZoneIDs, secure.HashToken(token), act.User.ID)
+		inv, err := a.Store.CreateInvitation(ctx, org.ID, email, in.Role, in.ZoneIDs, secure.HashToken(token), actorUserID(ctx))
 		if err != nil {
 			a.fail(w, r, err)
 			return
 		}
 		link := a.Cfg.PublicURL + "/invite/" + token
 		mailErr := a.Mailer.Send(context0(r), mailMessage(email, "You have been invited to "+org.Name, "Join "+org.Name,
-			[]string{act.User.DisplayName() + " invited you to join " + org.Name + " as " + roleLabel(in.Role) + ".",
+			[]string{inviteLine(act, org, in.Role),
 				"This invitation expires in 7 days."}, "Accept invitation", link))
 		if mailErr != nil && !errors.Is(mailErr, errMailDisabled()) {
 			a.Log.Warn("invite email failed", "err", mailErr, "email", email)
@@ -760,6 +760,14 @@ func (a *App) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 			Metadata: map[string]any{"role": in.Role, "zone_ids": in.ZoneIDs}})
 	}
 	writeJSON(w, 201, map[string]any{"results": results})
+}
+
+// inviteLine opens an invitation email, naming the inviter when a person sent it.
+func inviteLine(act *Actor, org *store.Org, role string) string {
+	if act.Type == "user" {
+		return act.User.DisplayName() + " invited you to join " + org.Name + " as " + roleLabel(role) + "."
+	}
+	return "You have been invited to join " + org.Name + " as " + roleLabel(role) + "."
 }
 
 func (a *App) handleResendInvite(w http.ResponseWriter, r *http.Request) {
@@ -783,7 +791,7 @@ func (a *App) handleResendInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	link := a.Cfg.PublicURL + "/invite/" + token
 	mailErr := a.Mailer.Send(context0(r), mailMessage(inv.Email, "Reminder: join "+org.Name, "Join "+org.Name,
-		[]string{act.User.DisplayName() + " invited you to join " + org.Name + " as " + roleLabel(inv.Role) + "."}, "Accept invitation", link))
+		[]string{inviteLine(act, org, inv.Role)}, "Accept invitation", link))
 	a.audit(r, auditEvent{Action: "member.invite_resend", ResourceType: "invitation", ResourceID: inv.ID.String(), ResourceName: inv.Email})
 	writeJSON(w, 200, map[string]any{"invite_url": link, "emailed": mailErr == nil})
 }
@@ -847,7 +855,7 @@ func (a *App) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		fields["name"] = "Enter a token name"
 	}
 	if _, ok := tokenRolePerms[in.Role]; !ok {
-		fields["role"] = "Choose admin, editor or viewer"
+		fields["role"] = "Choose org_admin, admin, editor or viewer"
 	}
 	in.IPAllowlist = cleanList(in.IPAllowlist)
 	if err := validateCIDRs(in.IPAllowlist); err != nil {
@@ -863,7 +871,7 @@ func (a *App) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	if len(in.ZoneIDs) == 0 {
 		in.ZoneIDs = nil
 	}
-	t := store.APIToken{OrgID: org.ID, Name: in.Name, Role: in.Role, ZoneIDs: in.ZoneIDs, IPAllowlist: in.IPAllowlist, CreatedBy: &act.User.ID}
+	t := store.APIToken{OrgID: &org.ID, Name: in.Name, Role: in.Role, ZoneIDs: in.ZoneIDs, IPAllowlist: in.IPAllowlist, CreatedBy: &act.User.ID}
 	if in.ExpiresInDays > 0 {
 		exp := timeNow().AddDate(0, 0, in.ExpiresInDays)
 		t.ExpiresAt = &exp
@@ -931,9 +939,51 @@ func (a *App) handleVerifyToken(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, errBadRequest("Call this endpoint with an API token."))
 		return
 	}
-	writeJSON(w, 200, map[string]any{"id": act.Token.ID, "name": act.Token.Name, "org_id": act.Token.OrgID, "role": act.Token.Role,
-		"zone_ids": act.Token.ZoneIDs, "expires_at": act.Token.ExpiresAt, "status": "active",
-		"permissions": permsFor(act.Token.Role, true)})
+	t := act.Token
+	writeJSON(w, 200, map[string]any{"id": t.ID, "name": t.Name, "global": t.OrgID == nil, "org_id": t.OrgID, "org_ids": t.OrgIDs,
+		"instance_role": t.InstanceRole, "role": t.Role, "zone_ids": t.ZoneIDs, "expires_at": t.ExpiresAt, "status": "active",
+		"permissions": permsFor(t.Role, true)})
+}
+
+// handleListOrgs lists the organizations the caller can work in, with its role in each. Global
+// tokens use it to discover organization IDs.
+func (a *App) handleListOrgs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	act := actorFrom(ctx)
+	type orgEntry struct {
+		ID   uuid.UUID `json:"id"`
+		Name string    `json:"name"`
+		Slug string    `json:"slug"`
+		Role string    `json:"role"`
+	}
+	out := []orgEntry{}
+	if act.Type == "user" {
+		list, err := a.Store.OrgsForUser(ctx, act.User.ID)
+		if err != nil {
+			a.fail(w, r, err)
+			return
+		}
+		for _, o := range list {
+			out = append(out, orgEntry{ID: o.ID, Name: o.Name, Slug: o.Slug, Role: o.Role})
+		}
+		writeJSON(w, 200, out)
+		return
+	}
+	ids := act.Token.OrgIDs
+	if act.Token.OrgID != nil {
+		ids = []uuid.UUID{*act.Token.OrgID}
+	}
+	orgs, err := a.Store.OrgsByIDs(ctx, ids)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	for i := range orgs {
+		if _, err := tokenScope(act.Token, &orgs[i]); err == nil {
+			out = append(out, orgEntry{ID: orgs[i].ID, Name: orgs[i].Name, Slug: orgs[i].Slug, Role: act.Token.Role})
+		}
+	}
+	writeJSON(w, 200, out)
 }
 
 func cleanList(in []string) []string {

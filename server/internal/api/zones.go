@@ -1162,11 +1162,18 @@ func (a *App) handleMoveZone(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, errField("target_org_id", "Organization not found"))
 		return
 	}
-	if act.Type != "user" {
-		a.fail(w, r, errForbidden("Zones can only be moved by users."))
+	switch {
+	case act.Type == "api_token":
+		// The token needs zone or organization admin access in the destination too, which only a
+		// global token can have.
+		if acc, err := a.tokenAccess(r, act.Token, target); err != nil || (acc.Role != "admin" && acc.Role != "org_admin") {
+			a.fail(w, r, errForbidden("This token needs Zone admin or Organization admin access to the destination organization."))
+			return
+		}
+	case act.Type != "user":
+		a.fail(w, r, errForbidden("Zones can only be moved by users and API tokens."))
 		return
-	}
-	if !act.User.IsSuperadmin {
+	case !act.User.IsSuperadmin:
 		m, err := a.Store.Membership(ctx, target.ID, act.User.ID)
 		if err != nil || (m.Role != "owner" && m.Role != "admin") {
 			a.fail(w, r, errForbidden("You must be an owner or administrator of the destination organization."))

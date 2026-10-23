@@ -12,6 +12,7 @@ import (
 	"github.com/flare-dns/flare/internal/pdns"
 	"github.com/flare-dns/flare/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 // PowerDNS-compatible API.
@@ -51,7 +52,9 @@ func (a *App) pdnsFailErr(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-// PDNSCompat requires an API token and loads its organization into the context.
+// PDNSCompat requires an API token and loads its organization into the context. Global tokens
+// have no single organization: zone routes resolve it from the zone (CompatZoneOrg), zone listing
+// covers every organization in scope, and zone creation picks one with the "account" field.
 func (a *App) PDNSCompat(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		act := actorFrom(r.Context())
@@ -59,19 +62,80 @@ func (a *App) PDNSCompat(next http.Handler) http.Handler {
 			pdnsFail(w, 401, "Unauthorized: send a Flare API token in the X-API-Key header")
 			return
 		}
-		org, err := a.Store.OrgByID(r.Context(), *act.OrgID)
-		if err != nil || org.Suspended {
+		if act.Token.OrgID == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		org, err := a.Store.OrgByID(r.Context(), *act.Token.OrgID)
+		if err != nil {
 			pdnsFail(w, 403, "Organization unavailable")
 			return
 		}
-		if len(org.IPAllowlist) > 0 && !ipAllowed(a.clientIP(r), org.IPAllowlist) {
-			pdnsFail(w, 403, "IP address not allowed")
+		acc, err := a.tokenAccess(r, act.Token, org)
+		if err != nil {
+			pdnsFail(w, 403, "Organization unavailable or IP address not allowed")
 			return
 		}
-		ctx := r.Context()
-		ctx = withOrg(ctx, org, &access{Role: act.Token.Role, ZoneIDs: act.Token.ZoneIDs})
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(withOrg(r.Context(), org, acc)))
 	})
+}
+
+// CompatZoneOrg scopes a global token's zone request to the organization that owns the zone.
+func (a *App) CompatZoneOrg(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if orgFrom(ctx) != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		name, ok := compatZoneName(r)
+		var z *store.Zone
+		var org *store.Org
+		var acc *access
+		var err error
+		if ok {
+			if z, err = a.Store.ZoneByName(ctx, name); err == nil {
+				if org, err = a.Store.OrgByID(ctx, z.OrgID); err == nil {
+					acc, err = a.tokenAccess(r, actorFrom(ctx).Token, org)
+				}
+			}
+		}
+		if !ok || err != nil {
+			pdnsFail(w, 404, "Could not find domain '"+name+"'")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(withOrg(ctx, org, acc)))
+	})
+}
+
+// compatOrgForCreate picks the organization a global token creates a zone in: the one named by
+// the PowerDNS "account" field (ID or slug), or the only organization the token can use.
+func (a *App) compatOrgForCreate(r *http.Request, account string) (*store.Org, *access, error) {
+	ctx := r.Context()
+	tok := actorFrom(ctx).Token
+	var org *store.Org
+	var err error
+	account = strings.TrimSpace(account)
+	switch {
+	case account != "":
+		if id, perr := uuid.Parse(account); perr == nil {
+			org, err = a.Store.OrgByID(ctx, id)
+		} else {
+			org, err = a.Store.OrgBySlug(ctx, strings.ToLower(account))
+		}
+	case len(tok.OrgIDs) == 1:
+		org, err = a.Store.OrgByID(ctx, tok.OrgIDs[0])
+	default:
+		return nil, nil, errBadRequest("Set \"account\" to the ID or slug of the organization that should own the zone.")
+	}
+	if err != nil {
+		return nil, nil, errBadRequest("Organization \"" + account + "\" not found.")
+	}
+	acc, err := a.tokenAccess(r, tok, org)
+	if err != nil {
+		return nil, nil, errBadRequest("Organization \"" + account + "\" not found.")
+	}
+	return org, acc, nil
 }
 
 func pdnsServerObject(version string) map[string]any {
@@ -103,6 +167,10 @@ func compatZoneObject(z *store.Zone) map[string]any {
 
 func (a *App) handleCompatListZones(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	if orgFrom(ctx) == nil {
+		a.compatListGlobalZones(w, r)
+		return
+	}
 	if !a.can(ctx, PermZonesRead) {
 		pdnsFail(w, 403, "Forbidden")
 		return
@@ -125,17 +193,64 @@ func (a *App) handleCompatListZones(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-// compatZone resolves the {zoneID} path parameter within the token's scope.
-func (a *App) compatZone(r *http.Request) (*store.Zone, error) {
+// compatListGlobalZones lists zones in every organization a global token can use, with the
+// organization's slug in "account".
+func (a *App) compatListGlobalZones(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	raw := chi.URLParam(r, "zoneID")
+	tok := actorFrom(ctx).Token
+	orgs, err := a.Store.OrgsByIDs(ctx, tok.OrgIDs)
+	if err != nil {
+		a.pdnsFailErr(w, r, err)
+		return
+	}
+	filter, _ := compatNameParam(r.URL.Query().Get("zone"))
+	out := []any{}
+	for i := range orgs {
+		if _, err := a.tokenAccess(r, tok, &orgs[i]); err != nil {
+			continue
+		}
+		zones, err := a.Store.ListZones(ctx, orgs[i].ID, nil)
+		if err != nil {
+			a.pdnsFailErr(w, r, err)
+			return
+		}
+		for j := range zones {
+			if filter == "" || zones[j].Name == filter {
+				obj := compatZoneObject(&zones[j])
+				obj["account"] = orgs[i].Slug
+				out = append(out, obj)
+			}
+		}
+	}
+	writeJSON(w, 200, out)
+}
+
+// compatNameParam normalizes a zone name from a PowerDNS API path or query.
+func compatNameParam(raw string) (string, bool) {
+	if raw == "" {
+		return "", false
+	}
 	name, err := url.PathUnescape(raw)
 	if err != nil {
-		return nil, errNotFound("Zone")
+		return "", false
 	}
 	name = strings.ReplaceAll(strings.ToLower(name), "=2f", "/")
 	if !strings.HasSuffix(name, ".") {
 		name += "."
+	}
+	return name, true
+}
+
+func compatZoneName(r *http.Request) (string, bool) {
+	return compatNameParam(chi.URLParam(r, "zoneID"))
+}
+
+// compatZone resolves the {zoneID} path parameter within the token's scope.
+func (a *App) compatZone(r *http.Request) (*store.Zone, error) {
+	ctx := r.Context()
+	name, ok := compatZoneName(r)
+	if !ok {
+		return nil, errNotFound("Zone")
 	}
 	z, err := a.Store.ZoneByName(ctx, name)
 	if err != nil || z.OrgID != orgFrom(ctx).ID || !zoneAllowed(accessFrom(ctx), z.ID) {
@@ -166,18 +281,29 @@ func (a *App) handleCompatGetZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pz.Account = ""
+	if actorFrom(ctx).Token.OrgID == nil {
+		pz.Account = orgFrom(ctx).Slug
+	}
 	writeJSON(w, 200, pz)
 }
 
 func (a *App) handleCompatCreateZone(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	if !a.can(ctx, PermZonesCreate) {
-		pdnsFail(w, 403, "Forbidden: this token cannot create zones")
-		return
-	}
 	var in pdns.Zone
 	if err := decode(r, &in); err != nil {
 		pdnsFail(w, 400, "Invalid JSON body")
+		return
+	}
+	if orgFrom(r.Context()) == nil {
+		org, acc, err := a.compatOrgForCreate(r, in.Account)
+		if err != nil {
+			a.pdnsFailErr(w, r, err)
+			return
+		}
+		r = r.WithContext(withOrg(r.Context(), org, acc))
+	}
+	ctx := r.Context()
+	if !a.can(ctx, PermZonesCreate) {
+		pdnsFail(w, 403, "Forbidden: this token cannot create zones")
 		return
 	}
 	req := createZoneRequest{Name: in.Name, Kind: in.Kind, Masters: in.Masters}

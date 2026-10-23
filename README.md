@@ -25,7 +25,7 @@ Flare is a multi-tenant DNS management platform for [PowerDNS Authoritative Serv
 - Roles: Owner, Administrator, DNS Editor, Viewer and Auditor, optionally scoped to specific zones
 - Invitations by email, or by shareable link when SMTP is not configured
 - Organization security policy: required two-factor authentication, maximum session length, IP allowlists
-- Scoped API tokens with zone restrictions, IP filters, expiry and rotation
+- Scoped API tokens with zone restrictions, IP filters, expiry and rotation, plus global tokens that span organizations and can manage them
 - PowerDNS-compatible API at `/api/v1/servers/localhost`, so cert-manager, external-dns, octoDNS, Terraform and other PowerDNS tools work unchanged with a scoped Flare token
 - Dynamic DNS (dyndns2 `/nic/update`) for routers and ddclient, authenticated with an API token
 
@@ -59,6 +59,7 @@ Flare covers what [PowerDNS-Admin](https://github.com/PowerDNS-Admin/PowerDNS-Ad
 | Record change history and activity log | Audit log for every action, per-zone activity, record history, CSV/JSON export, webhooks |
 | Dynamic DNS (`/nic/update`) | Same protocol, authenticated with a scoped API token |
 | PowerDNS API proxy with API keys | PowerDNS-compatible API with scoped tokens, validation and auditing |
+| Administrator and Operator API keys across accounts | Global API tokens for all or selected organizations, optionally with organization management or full administrator access |
 | DNSSEC enable, disable and key display | Same, plus algorithm choice, NSEC3 and key rollover management |
 | Server configuration and statistics | Per-server statistics and runtime configuration, across several PowerDNS servers |
 | Staged edits applied in one batch | Changes apply immediately; bulk operations use zone file import, templates, or the API |
@@ -220,7 +221,17 @@ All settings are environment variables. Values marked as runtime can also be cha
 
 Editors, viewers and auditors can be restricted to a subset of zones. Instance administrators manage servers, nameserver sets, global settings, all users and all organizations.
 
-API tokens have their own roles: **Read only**, **DNS edit** and **Zone admin**. A token can never manage members, SSO, tokens or organization settings.
+API tokens have their own roles: **Read only**, **DNS edit**, **Zone admin** and **Organization admin**. Organization admin adds organization settings, members, invitations and webhooks. No token can create API tokens, change SSO or SCIM, or delete an organization, so a token can never grant itself more access.
+
+### Global API tokens
+
+Instance administrators create global tokens under **Instance administration > API tokens** for automation that spans organizations. A global token has:
+
+- **Organizations**: every organization, including ones created later, or a chosen list
+- **Permissions in each organization**: one of the token roles above
+- **Instance access**: *None*; *Manage organizations*, which creates organizations and changes their limits and placement through `/api/v1/admin/orgs`; or *Full administrator*, which can use every admin endpoint except creating tokens
+
+`GET /api/v1/orgs` lists the organizations a token can use. With the PowerDNS-compatible API, a global token sees zones from all of its organizations, with the organization slug in `account`, and sets `account` when creating a zone. Full administrator tokens, like instance administrators, are not blocked by organization suspension or IP rules, so restrict them to known addresses.
 
 
 ## Single sign-on (OpenID Connect)

@@ -1,5 +1,6 @@
 export type Role = "owner" | "admin" | "editor" | "viewer" | "auditor";
-export type TokenRole = "admin" | "editor" | "viewer";
+export type TokenRole = "org_admin" | "admin" | "editor" | "viewer";
+export type InstanceRole = "none" | "orgs" | "admin";
 export type ZoneStatus = "pending" | "active" | "moved" | "paused";
 
 export type Perm =
@@ -161,7 +162,11 @@ export interface Invitation {
 
 export interface ApiToken {
   id: string;
-  org_id: string;
+  /** Null for a global token. */
+  org_id: string | null;
+  /** Organizations a global token can use; null means every organization. */
+  org_ids: string[] | null;
+  instance_role: InstanceRole;
   name: string;
   prefix: string;
   role: TokenRole;

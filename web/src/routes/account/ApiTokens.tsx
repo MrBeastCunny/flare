@@ -10,13 +10,8 @@ import { api, errorMessage, fieldError } from "../../lib/api";
 import { keys, useOrgId, useZones } from "../../lib/queries";
 import { formatDate, stripDot, timeAgo } from "../../lib/format";
 import { toast } from "../../lib/toast";
+import { tokenRoleLabel, tokenRoles } from "../../lib/tokens";
 import type { ApiToken, TokenRole } from "../../lib/types";
-
-const tokenRoles: { value: TokenRole; label: string; description: string }[] = [
-  { value: "viewer", label: "Read only", description: "List zones and read DNS records." },
-  { value: "editor", label: "DNS edit", description: "Edit DNS records, DNSSEC and zone settings." },
-  { value: "admin", label: "Zone admin", description: "Everything above, plus creating and deleting zones and reading the audit log." },
-];
 
 export default function ApiTokens() {
   const orgId = useOrgId();
@@ -68,7 +63,6 @@ export default function ApiTokens() {
   });
 
   const zoneName = (id: string) => stripDot(zones.data?.find((z) => z.id === id)?.name ?? id);
-  const roleLabel = (r: string) => tokenRoles.find((t) => t.value === r)?.label ?? r;
 
   const columns: Column<ApiToken>[] = [
     {
@@ -82,7 +76,7 @@ export default function ApiTokens() {
         </div>
       ),
     },
-    { key: "role", header: "Permissions", width: "14%", render: (t) => <Badge variant="neutral">{roleLabel(t.role)}</Badge> },
+    { key: "role", header: "Permissions", width: "14%", render: (t) => <Badge variant="neutral">{tokenRoleLabel(t.role)}</Badge> },
     {
       key: "scope",
       header: "Zones",

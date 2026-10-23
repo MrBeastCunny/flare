@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -274,12 +275,19 @@ var rolePerms = map[string][]Perm{
 	"auditor": {PermOrgRead, PermMembersRead, PermZonesRead, PermAuditRead},
 }
 
-// Token roles are a subset that never includes org administration.
+// Token roles never include creating tokens, SSO or deleting the organization, so a token cannot
+// mint credentials or grant itself more access.
 var tokenRolePerms = map[string][]Perm{
+	"org_admin": {PermOrgRead, PermOrgUpdate, PermMembersRead, PermMembersManage, PermZonesRead, PermZonesCreate, PermZonesEdit,
+		PermZonesDelete, PermDNSEdit, PermAuditRead, PermWebhooksManage},
 	"admin":  {PermOrgRead, PermMembersRead, PermZonesRead, PermZonesCreate, PermZonesEdit, PermZonesDelete, PermDNSEdit, PermAuditRead},
 	"editor": {PermOrgRead, PermZonesRead, PermZonesEdit, PermDNSEdit},
 	"viewer": {PermOrgRead, PermZonesRead},
 }
+
+// Instance roles give global tokens access to the admin API: "orgs" manages organizations,
+// "admin" can use every admin endpoint except creating tokens.
+var instanceRoleRank = map[string]int{"none": 0, "orgs": 1, "admin": 2}
 
 var validRoles = map[string]bool{"owner": true, "admin": true, "editor": true, "viewer": true, "auditor": true}
 var roleRank = map[string]int{"viewer": 1, "auditor": 1, "editor": 2, "admin": 3, "owner": 4}
@@ -313,6 +321,45 @@ func (a *App) require(ctx context.Context, p Perm) error {
 		return errForbidden("You do not have permission to perform this action.")
 	}
 	return nil
+}
+
+// actorUserID returns the signed-in user's ID, or nil for tokens and system actors.
+func actorUserID(ctx context.Context) *uuid.UUID {
+	if act := actorFrom(ctx); act != nil && act.Type == "user" {
+		return &act.User.ID
+	}
+	return nil
+}
+
+// tokenInstanceAdmin reports whether tok is a global token with full instance access. Like an
+// instance administrator, it is not blocked by organization suspension or IP rules.
+func tokenInstanceAdmin(tok *store.APIToken) bool {
+	return tok.OrgID == nil && tok.InstanceRole == "admin"
+}
+
+// tokenScope checks that tok may act in org and returns its access there.
+func tokenScope(tok *store.APIToken, org *store.Org) (*access, error) {
+	switch {
+	case tok.OrgID != nil && *tok.OrgID != org.ID:
+		return nil, errNotFound("Organization")
+	case tok.OrgID == nil && tok.OrgIDs != nil && !slices.Contains(tok.OrgIDs, org.ID):
+		return nil, errNotFound("Organization")
+	case org.Suspended && !tokenInstanceAdmin(tok):
+		return nil, errCode(403, "org_suspended", "This organization has been suspended. Contact your administrator.")
+	}
+	return &access{Role: tok.Role, ZoneIDs: tok.ZoneIDs}, nil
+}
+
+// tokenAccess is tokenScope plus the organization's IP allowlist.
+func (a *App) tokenAccess(r *http.Request, tok *store.APIToken, org *store.Org) (*access, error) {
+	acc, err := tokenScope(tok, org)
+	if err != nil {
+		return nil, err
+	}
+	if len(org.IPAllowlist) > 0 && !tokenInstanceAdmin(tok) && !ipAllowed(a.clientIP(r), org.IPAllowlist) {
+		return nil, errCode(403, "ip_not_allowed", "Access to this organization is restricted to approved networks.")
+	}
+	return acc, nil
 }
 
 func zoneAllowed(acc *access, zoneID uuid.UUID) bool {

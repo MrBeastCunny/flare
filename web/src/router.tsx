@@ -26,6 +26,7 @@ const OrgSettings = lazy(() => import("./routes/account/OrgSettings"));
 const NewOrg = lazy(() => import("./routes/account/NewOrg"));
 const Templates = lazy(() => import("./routes/account/Templates"));
 const AdminTemplates = lazy(() => import("./routes/admin/AdminTemplates"));
+const AdminApiTokens = lazy(() => import("./routes/admin/AdminApiTokens"));
 
 const ZoneOverview = lazy(() => import("./routes/zone/Overview"));
 const DnsRecords = lazy(() => import("./routes/zone/DnsRecords"));
@@ -115,6 +116,7 @@ export const router = createBrowserRouter([
                   { path: "settings", element: <S><AdminSettings /></S> },
                   { path: "audit-log", element: <S><AdminAudit /></S> },
                   { path: "templates", element: <S><AdminTemplates /></S> },
+                  { path: "api-tokens", element: <S><AdminApiTokens /></S> },
                 ],
               },
               {
