@@ -32,6 +32,7 @@ const actionLabels: Record<string, string> = {
   "member.invite_resend": "Re-sent invitation",
   "member.invite_revoke": "Revoked invitation",
   "member.join": "Joined organization",
+  "member.add": "Added member",
   "member.update": "Changed member role",
   "member.remove": "Removed member",
   "member.leave": "Left organization",

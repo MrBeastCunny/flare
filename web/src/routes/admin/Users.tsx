@@ -6,6 +6,7 @@ import { PageHeader, Avatar, ConfirmDialog } from "../../components/ui";
 import { VirtualTable, type Column } from "../../components/VirtualTable";
 import { VirtualSelect } from "../../components/VirtualSelect";
 import { ActionMenu } from "../../components/VirtualMenu";
+import { UserOrganizationsDialog } from "../../components/AdminMembership";
 import { api, errorMessage, fieldError } from "../../lib/api";
 import { keys, useMe } from "../../lib/queries";
 import { formatDate, timeAgo } from "../../lib/format";
@@ -19,6 +20,7 @@ export default function Users() {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
   const [deleting, setDeleting] = useState<AdminUser | null>(null);
+  const [orgsFor, setOrgsFor] = useState<AdminUser | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [form, setForm] = useState({ email: "", name: "", password: "", is_superadmin: false, send_email: true });
@@ -126,8 +128,9 @@ export default function Users() {
           <ActionMenu
             items={[
               { key: "edit", label: "Edit details", onSelect: () => openDialog(u) },
+              { key: "orgs", label: "Organizations", onSelect: () => setOrgsFor(u) },
               { key: "admin", label: u.is_superadmin ? "Remove administrator" : "Make administrator", hidden: self, onSelect: () => update.mutate({ u, body: { is_superadmin: !u.is_superadmin } }) },
-              { key: "mfa", label: "Reset two-factor authentication", hidden: !u.totp_enabled, onSelect: () => update.mutate({ u, body: { reset_mfa: true } }) },
+              { key: "mfa", label: "Reset 2FA", hidden: !u.totp_enabled, onSelect: () => update.mutate({ u, body: { reset_mfa: true } }) },
               { key: "logout", label: "Sign out everywhere", onSelect: () => update.mutate({ u, body: { logout: true } }) },
               { key: "disable", label: u.disabled ? "Enable account" : "Disable account", hidden: self, danger: !u.disabled, separatorBefore: true, onSelect: () => update.mutate({ u, body: { disabled: !u.disabled } }) },
               { key: "delete", label: "Delete user", hidden: self, danger: true, onSelect: () => setDeleting(u) },
@@ -220,6 +223,7 @@ export default function Users() {
           </form>
         </Dialog>
       </Dialog.Root>
+      <UserOrganizationsDialog user={orgsFor} onOpenChange={(o) => !o && setOrgsFor(null)} />
       <ConfirmDialog
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}

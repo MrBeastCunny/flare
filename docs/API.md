@@ -177,6 +177,8 @@ Global API tokens can call `/admin` too, depending on their instance access: `or
 | DELETE | `/users/{id}` | Delete a user |
 | GET, POST | `/orgs` | Organizations; create `{name, owner_email?}`. `owner_email` defaults to the signed-in administrator and is required for API tokens |
 | PATCH | `/orgs/{id}` | `{max_zones, nameserver_set_id, pdns_server_id, suspended}` |
+| PUT | `/orgs/{id}/members/{userID}` | `{role}` adds an existing user to the organization without an invitation, or changes their role. Zone restrictions are kept for scoped roles. Refuses to demote the last owner |
+| DELETE | `/orgs/{id}/members/{userID}` | Remove a user from the organization (not the last owner) |
 | GET | `/zones` | All zones |
 | GET | `/audit-logs`, `/audit-logs/export` | Instance-wide audit log |
 

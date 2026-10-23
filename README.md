@@ -219,7 +219,7 @@ All settings are environment variables. Values marked as runtime can also be cha
 | Organization security policy | yes | yes | | | |
 | Delete the organization | yes | | | | |
 
-Editors, viewers and auditors can be restricted to a subset of zones. Instance administrators manage servers, nameserver sets, global settings, all users and all organizations.
+Editors, viewers and auditors can be restricted to a subset of zones. Instance administrators manage servers, nameserver sets, global settings, all users and all organizations, and can add any user to an organization with any role, including Owner, without an invitation (**Users > Organizations** or **Organizations > Add member**).
 
 API tokens have their own roles: **Read only**, **DNS edit**, **Zone admin** and **Organization admin**. Organization admin adds organization settings, members, invitations and webhooks. No token can create API tokens, change SSO or SCIM, or delete an organization, so a token can never grant itself more access.
 

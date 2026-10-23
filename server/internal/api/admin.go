@@ -1300,3 +1300,107 @@ func (a *App) handleNameserverSetsPublic(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, 200, out)
 }
+
+// handleAdminSetMember adds an existing user to an organization, or changes their role, without
+// an invitation. Zone restrictions are kept for scoped roles and cleared for owners and admins.
+func (a *App) handleAdminSetMember(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	org, u, ok := a.adminMemberParams(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Role string `json:"role"`
+	}
+	if err := decode(r, &in); err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	if !validRoles[in.Role] {
+		a.fail(w, r, errField("role", "Choose a valid role"))
+		return
+	}
+	m, err := a.Store.Membership(ctx, org.ID, u.ID)
+	switch {
+	case errors.Is(err, db.ErrNotFound):
+		if err := a.Store.AddMember(ctx, org.ID, u.ID, in.Role, nil, "manual"); err != nil {
+			a.fail(w, r, err)
+			return
+		}
+		a.audit(r, auditEvent{OrgID: &org.ID, Action: "member.add", ResourceType: "member", ResourceID: u.ID.String(), ResourceName: u.Email,
+			Metadata: map[string]any{"role": in.Role, "by_admin": true}})
+	case err != nil:
+		a.fail(w, r, err)
+		return
+	default:
+		if m.Role == "owner" && in.Role != "owner" {
+			if n, _ := a.Store.CountOwners(ctx, org.ID); n <= 1 {
+				a.fail(w, r, errConflict("An organization must have at least one owner. Make someone else the owner first."))
+				return
+			}
+		}
+		zoneIDs := m.ZoneIDs
+		if in.Role == "owner" || in.Role == "admin" {
+			zoneIDs = nil
+		}
+		if err := a.Store.UpdateMember(ctx, org.ID, m.ID, in.Role, zoneIDs); err != nil {
+			a.fail(w, r, err)
+			return
+		}
+		a.audit(r, auditEvent{OrgID: &org.ID, Action: "member.update", ResourceType: "member", ResourceID: u.ID.String(), ResourceName: u.Email,
+			Metadata: map[string]any{"role": map[string]string{"from": m.Role, "to": in.Role}, "by_admin": true}})
+	}
+	updated, err := a.Store.Membership(ctx, org.ID, u.ID)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, updated)
+}
+
+func (a *App) handleAdminRemoveMember(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	org, u, ok := a.adminMemberParams(w, r)
+	if !ok {
+		return
+	}
+	m, err := a.Store.Membership(ctx, org.ID, u.ID)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	if m.Role == "owner" {
+		if n, _ := a.Store.CountOwners(ctx, org.ID); n <= 1 {
+			a.fail(w, r, errConflict("An organization must have at least one owner. Make someone else the owner first."))
+			return
+		}
+	}
+	if err := a.Store.RemoveMember(ctx, org.ID, u.ID); err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	a.audit(r, auditEvent{OrgID: &org.ID, Action: "member.remove", ResourceType: "member", ResourceID: u.ID.String(), ResourceName: u.Email,
+		Metadata: map[string]any{"role": m.Role, "by_admin": true}})
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (a *App) adminMemberParams(w http.ResponseWriter, r *http.Request) (*store.Org, *store.User, bool) {
+	ctx := r.Context()
+	orgID, err1 := uuid.Parse(chi.URLParam(r, "orgID"))
+	userID, err2 := uuid.Parse(chi.URLParam(r, "userID"))
+	if err1 != nil || err2 != nil {
+		a.fail(w, r, errNotFound("Member"))
+		return nil, nil, false
+	}
+	org, err := a.Store.OrgByID(ctx, orgID)
+	if err != nil {
+		a.fail(w, r, err)
+		return nil, nil, false
+	}
+	u, err := a.Store.UserByID(ctx, userID)
+	if err != nil {
+		a.fail(w, r, err)
+		return nil, nil, false
+	}
+	return org, u, true
+}

@@ -258,6 +258,8 @@ func (a *App) Router(webFS fs.FS) http.Handler {
 				r.Get("/orgs", a.handleAdminOrgs)
 				r.Post("/orgs", a.handleAdminCreateOrg)
 				r.Patch("/orgs/{orgID}", a.handleAdminUpdateOrg)
+				r.Put("/orgs/{orgID}/members/{userID}", a.handleAdminSetMember)
+				r.Delete("/orgs/{orgID}/members/{userID}", a.handleAdminRemoveMember)
 			})
 
 			// Signed-in administrators only: tokens never create tokens, and test emails go to the

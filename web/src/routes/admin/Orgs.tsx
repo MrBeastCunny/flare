@@ -7,6 +7,7 @@ import { PageHeader } from "../../components/ui";
 import { VirtualTable, type Column } from "../../components/VirtualTable";
 import { VirtualSelect } from "../../components/VirtualSelect";
 import { ActionMenu } from "../../components/VirtualMenu";
+import { AddOrgMemberDialog } from "../../components/AdminMembership";
 import { api, errorMessage, fieldError } from "../../lib/api";
 import { keys } from "../../lib/queries";
 import { formatDate, formatNumber } from "../../lib/format";
@@ -23,6 +24,7 @@ export default function Orgs() {
   const [editing, setEditing] = useState<AdminOrg | null>(null);
   const [limits, setLimits] = useState({ max_zones: "", nameserver_set_id: "", pdns_server_id: "", suspended: false });
   const [creating, setCreating] = useState(false);
+  const [addingTo, setAddingTo] = useState<AdminOrg | null>(null);
   const [newOrg, setNewOrg] = useState({ name: "", owner_email: "" });
 
   const refresh = () => qc.invalidateQueries({ queryKey: keys.admin("orgs") });
@@ -88,6 +90,7 @@ export default function Orgs() {
         <ActionMenu
           items={[
             { key: "open", label: "Open dashboard", onSelect: () => navigate(`/${o.id}`) },
+            { key: "member", label: "Add member", onSelect: () => setAddingTo(o) },
             { key: "limits", label: "Limits and placement", onSelect: () => open(o) },
           ]}
         />
@@ -156,6 +159,8 @@ export default function Orgs() {
           </div>
         </Dialog>
       </Dialog.Root>
+
+      <AddOrgMemberDialog org={addingTo} onOpenChange={(o) => !o && setAddingTo(null)} />
 
       <Dialog.Root open={creating} onOpenChange={setCreating}>
         <Dialog size="lg" className="p-6">
