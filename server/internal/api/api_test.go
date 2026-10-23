@@ -257,3 +257,47 @@ func TestCheckPassword(t *testing.T) {
 		t.Errorf("good password rejected: %v", err)
 	}
 }
+
+func TestInstanceAdminAudit(t *testing.T) {
+	req := func(path string, acc *access) *http.Request {
+		r := httptest.NewRequest("POST", path, nil)
+		if acc != nil {
+			r = r.WithContext(context.WithValue(r.Context(), keyMembership, acc))
+		}
+		return r
+	}
+	if !viaInstanceAdmin(req("/api/v1/admin/orgs/x/members/y", nil), "user") {
+		t.Error("admin endpoints are instance administration")
+	}
+	if !viaInstanceAdmin(req("/api/v1/orgs/x/zones", &access{Role: "admin", ViaInstance: true}), "user") {
+		t.Error("an instance administrator outside the organization is instance administration")
+	}
+	if viaInstanceAdmin(req("/api/v1/orgs/x/zones", &access{Role: "admin"}), "user") {
+		t.Error("members acting in their organization are not masked")
+	}
+	if viaInstanceAdmin(req("/api/v1/admin/orgs", nil), "system") {
+		t.Error("system events are never masked")
+	}
+	if a, _ := tokenScope(&store.APIToken{Role: "viewer"}, &store.Org{}); !a.ViaInstance {
+		t.Error("global tokens act through instance administration")
+	}
+
+	id := uuid.New()
+	e := store.AuditEntry{InstanceAdmin: true, ActorType: "user", ActorID: &id, ActorLabel: "root@example.com", IP: "203.0.113.9", UserAgent: "curl"}
+	maskInstanceAdmin(&e)
+	if e.ActorID != nil || e.IP != "" || e.UserAgent != "" || e.ActorLabel != "Instance administrator" || e.ActorType != "instance_admin" {
+		t.Errorf("instance administrator not masked: %+v", e)
+	}
+	plain := store.AuditEntry{ActorLabel: "member@example.com", IP: "198.51.100.1"}
+	maskInstanceAdmin(&plain)
+	if plain.ActorLabel != "member@example.com" || plain.IP != "198.51.100.1" {
+		t.Error("ordinary events must stay unmasked")
+	}
+
+	super := context.WithValue(context.Background(), keyActor, &Actor{Type: "user", User: &store.User{IsSuperadmin: true}})
+	member := context.WithValue(context.Background(), keyActor, &Actor{Type: "user", User: &store.User{}})
+	orgTok := context.WithValue(context.Background(), keyActor, &Actor{Type: "api_token", Token: &store.APIToken{OrgID: &id, Role: "org_admin"}})
+	if !canSeeInstanceAdmins(super) || canSeeInstanceAdmins(member) || canSeeInstanceAdmins(orgTok) {
+		t.Error("only instance administrators see who performed instance administration")
+	}
+}

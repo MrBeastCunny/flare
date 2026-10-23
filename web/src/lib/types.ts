@@ -185,7 +185,8 @@ export interface AuditEntry {
   id: number;
   org_id: string | null;
   zone_id: string | null;
-  actor_type: "user" | "api_token" | "scim" | "system" | "anonymous";
+  /** "instance_admin" when the actor is hidden from organization members. */
+  actor_type: "user" | "api_token" | "scim" | "system" | "anonymous" | "instance_admin";
   actor_id: string | null;
   actor_label: string;
   action: string;
@@ -198,6 +199,8 @@ export interface AuditEntry {
   user_agent: string;
   created_at: string;
   org_name?: string;
+  /** Performed through instance administration; organization members see it masked. */
+  instance_admin: boolean;
 }
 
 export interface AuditPage {

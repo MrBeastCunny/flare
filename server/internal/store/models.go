@@ -242,6 +242,8 @@ type AuditEntry struct {
 	UserAgent    string          `json:"user_agent"`
 	CreatedAt    time.Time       `json:"created_at"`
 	OrgName      string          `json:"org_name,omitempty"`
+	// InstanceAdmin marks events performed through instance administration.
+	InstanceAdmin bool `json:"instance_admin"`
 }
 
 type Webhook struct {

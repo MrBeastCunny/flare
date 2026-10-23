@@ -407,9 +407,10 @@ func (s *Store) InsertAudit(ctx context.Context, e AuditEntry) (int64, error) {
 	}
 	var id int64
 	err := s.q.QueryRow(ctx, `INSERT INTO audit_logs(org_id, zone_id, actor_type, actor_id, actor_label, action, resource_type,
-		resource_id, resource_name, outcome, metadata, ip, user_agent) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+		resource_id, resource_name, outcome, metadata, ip, user_agent, instance_admin)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
 		e.OrgID, e.ZoneID, e.ActorType, e.ActorID, e.ActorLabel, e.Action, e.ResourceType, e.ResourceID, e.ResourceName,
-		e.Outcome, e.Metadata, e.IP, e.UserAgent).Scan(&id)
+		e.Outcome, e.Metadata, e.IP, e.UserAgent, e.InstanceAdmin).Scan(&id)
 	return id, err
 }
 
@@ -427,6 +428,9 @@ type AuditFilter struct {
 	Limit        int
 	// IncludeMemberAuth adds instance-level sign-in events of the org's members.
 	IncludeMemberAuth bool
+	// HideInstanceAdmin stops actor and IP filters from matching instance administration events,
+	// so their masked identity cannot be recovered by searching.
+	HideInstanceAdmin bool
 }
 
 func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, error) {
@@ -434,22 +438,24 @@ func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, err
 		f.Limit = 100
 	}
 	rows, err := s.q.Query(ctx, `SELECT a.id, a.org_id, a.zone_id, a.actor_type, a.actor_id, a.actor_label, a.action, a.resource_type,
-		a.resource_id, a.resource_name, a.outcome, a.metadata, a.ip, a.user_agent, a.created_at, COALESCE(o.name, '')
+		a.resource_id, a.resource_name, a.outcome, a.metadata, a.ip, a.user_agent, a.created_at, COALESCE(o.name, ''), a.instance_admin
 		FROM audit_logs a LEFT JOIN organizations o ON o.id = a.org_id
 		WHERE ($1::uuid IS NULL OR a.org_id = $1
 		       OR ($12 AND a.org_id IS NULL AND a.action LIKE 'auth.%'
 		           AND a.actor_id IN (SELECT user_id FROM memberships WHERE org_id = $1)))
 		  AND ($2::uuid IS NULL OR a.zone_id = $2)
-		  AND ($3::uuid IS NULL OR a.actor_id = $3)
+		  AND ($3::uuid IS NULL OR (a.actor_id = $3 AND NOT ($13 AND a.instance_admin)))
 		  AND ($4 = '' OR a.action LIKE $4 || '%')
 		  AND ($5 = '' OR a.resource_type = $5)
 		  AND ($6 = '' OR a.outcome = $6)
-		  AND ($7 = '' OR a.resource_name ILIKE '%' || $7 || '%' OR a.actor_label ILIKE '%' || $7 || '%' OR a.action ILIKE '%' || $7 || '%' OR a.ip = $7)
+		  AND ($7 = '' OR a.resource_name ILIKE '%' || $7 || '%' OR a.action ILIKE '%' || $7 || '%'
+		       OR (NOT ($13 AND a.instance_admin) AND (a.actor_label ILIKE '%' || $7 || '%' OR a.ip = $7)))
 		  AND ($8::timestamptz IS NULL OR a.created_at >= $8)
 		  AND ($9::timestamptz IS NULL OR a.created_at < $9)
 		  AND ($10 = 0 OR a.id < $10)
 		ORDER BY a.id DESC LIMIT $11`,
-		f.OrgID, f.ZoneID, f.ActorID, f.Action, f.ResourceType, f.Outcome, f.Query, f.Since, f.Until, f.Before, f.Limit, f.IncludeMemberAuth)
+		f.OrgID, f.ZoneID, f.ActorID, f.Action, f.ResourceType, f.Outcome, f.Query, f.Since, f.Until, f.Before, f.Limit, f.IncludeMemberAuth,
+		f.HideInstanceAdmin)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +464,7 @@ func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, err
 	for rows.Next() {
 		var e AuditEntry
 		if err := rows.Scan(&e.ID, &e.OrgID, &e.ZoneID, &e.ActorType, &e.ActorID, &e.ActorLabel, &e.Action, &e.ResourceType,
-			&e.ResourceID, &e.ResourceName, &e.Outcome, &e.Metadata, &e.IP, &e.UserAgent, &e.CreatedAt, &e.OrgName); err != nil {
+			&e.ResourceID, &e.ResourceName, &e.Outcome, &e.Metadata, &e.IP, &e.UserAgent, &e.CreatedAt, &e.OrgName, &e.InstanceAdmin); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

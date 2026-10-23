@@ -293,7 +293,7 @@ func (a *App) LoadOrg(next http.Handler) http.Handler {
 			} else if err == nil {
 				acc = &access{Role: m.Role, ZoneIDs: m.ZoneIDs}
 			} else if errors.Is(err, db.ErrNotFound) && act.User.IsSuperadmin {
-				acc = &access{Role: "admin"}
+				acc = &access{Role: "admin", ViaInstance: true}
 			} else if errors.Is(err, db.ErrNotFound) {
 				a.fail(w, r, errNotFound("Organization"))
 				return

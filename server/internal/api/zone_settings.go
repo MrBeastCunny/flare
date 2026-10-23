@@ -588,6 +588,9 @@ func (a *App) handleZoneOverview(w http.ResponseWriter, r *http.Request) {
 	if a.can(ctx, PermAuditRead) || a.can(ctx, PermZonesRead) {
 		activity, _ := a.Store.AuditActivity(ctx, &z.OrgID, &z.ID, 30)
 		recent, _ := a.Store.ListAudit(ctx, store.AuditFilter{OrgID: &z.OrgID, ZoneID: &z.ID, Limit: 8})
+		if !canSeeInstanceAdmins(ctx) {
+			maskInstanceAdmins(recent)
+		}
 		out["activity"] = activity
 		out["recent_changes"] = recent
 	}
@@ -660,6 +663,9 @@ func (a *App) handleOrgOverview(w http.ResponseWriter, r *http.Request) {
 	if a.can(ctx, PermAuditRead) {
 		activity, _ := a.Store.AuditActivity(ctx, &org.ID, nil, 30)
 		recent, _ := a.Store.ListAudit(ctx, store.AuditFilter{OrgID: &org.ID, Limit: 8})
+		if !canSeeInstanceAdmins(ctx) {
+			maskInstanceAdmins(recent)
+		}
 		out["activity"] = activity
 		out["recent_activity"] = recent
 	}

@@ -59,6 +59,7 @@ func (a *App) audit(r *http.Request, ev auditEvent) {
 			e.ActorType, e.ActorLabel = "anonymous", "Anonymous"
 		}
 	}
+	e.InstanceAdmin = viaInstanceAdmin(r, e.ActorType)
 	if ev.Metadata != nil {
 		if raw, err := json.Marshal(ev.Metadata); err == nil {
 			e.Metadata = raw
@@ -79,11 +80,50 @@ func (a *App) audit(r *http.Request, ev auditEvent) {
 	}
 }
 
+// viaInstanceAdmin reports whether a request performs instance administration: it goes through the
+// admin API, or acts in an organization through instance-level access instead of membership.
+func viaInstanceAdmin(r *http.Request, actorType string) bool {
+	if actorType != "user" && actorType != "api_token" {
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/admin/") {
+		return true
+	}
+	acc := accessFrom(r.Context())
+	return acc != nil && acc.ViaInstance
+}
+
+// canSeeInstanceAdmins reports whether the caller may see who performed instance administration
+// events: instance administrators and full administrator tokens.
+func canSeeInstanceAdmins(ctx context.Context) bool {
+	act := actorFrom(ctx)
+	return act != nil && ((act.Type == "user" && act.User.IsSuperadmin) || (act.Type == "api_token" && tokenInstanceAdmin(act.Token)))
+}
+
+// maskInstanceAdmin hides who performed an instance administration event, and from where, so
+// organization members see that the instance administration made a change but not who or from
+// which address.
+func maskInstanceAdmin(e *store.AuditEntry) {
+	if !e.InstanceAdmin {
+		return
+	}
+	e.ActorType, e.ActorID, e.ActorLabel, e.IP, e.UserAgent = "instance_admin", nil, "Instance administrator", "", ""
+}
+
+func maskInstanceAdmins(entries []store.AuditEntry) []store.AuditEntry {
+	for i := range entries {
+		maskInstanceAdmin(&entries[i])
+	}
+	return entries
+}
+
 func (a *App) dispatchWebhooks(ctx context.Context, orgID uuid.UUID, e store.AuditEntry) {
 	hooks, err := a.Store.EnabledWebhooks(ctx, orgID)
 	if err != nil || len(hooks) == 0 {
 		return
 	}
+	// Webhooks deliver to the organization's own systems, so instance administrators stay masked.
+	maskInstanceAdmin(&e)
 	payload, _ := json.Marshal(map[string]any{
 		"id":         e.ID,
 		"event":      e.Action,

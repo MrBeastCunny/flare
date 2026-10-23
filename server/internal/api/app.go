@@ -227,6 +227,9 @@ func orgFrom(ctx context.Context) *store.Org {
 type access struct {
 	Role    string
 	ZoneIDs []uuid.UUID // nil = all zones
+	// ViaInstance is set when the access comes from instance administration rather than
+	// membership: an instance administrator outside the organization, or a global API token.
+	ViaInstance bool
 }
 
 func accessFrom(ctx context.Context) *access {
@@ -347,7 +350,7 @@ func tokenScope(tok *store.APIToken, org *store.Org) (*access, error) {
 	case org.Suspended && !tokenInstanceAdmin(tok):
 		return nil, errCode(403, "org_suspended", "This organization has been suspended. Contact your administrator.")
 	}
-	return &access{Role: tok.Role, ZoneIDs: tok.ZoneIDs}, nil
+	return &access{Role: tok.Role, ZoneIDs: tok.ZoneIDs, ViaInstance: tok.OrgID == nil}, nil
 }
 
 // tokenAccess is tokenScope plus the organization's IP allowlist.

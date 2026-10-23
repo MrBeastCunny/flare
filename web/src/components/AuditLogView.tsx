@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Badge, Button, Dialog, InputGroup, LayerCard, Text, Tooltip } from "@cloudflare/kumo";
-import { DownloadSimpleIcon, MagnifyingGlassIcon, XIcon, ArrowsClockwiseIcon, RobotIcon, UserIcon, KeyIcon, IdentificationCardIcon } from "@phosphor-icons/react";
+import { DownloadSimpleIcon, MagnifyingGlassIcon, XIcon, ArrowsClockwiseIcon, RobotIcon, UserIcon, KeyIcon, IdentificationCardIcon, ShieldStarIcon } from "@phosphor-icons/react";
 import { VirtualTable, type Column } from "./VirtualTable";
 import { VirtualSelect } from "./VirtualSelect";
 import { Mono, DetailRow } from "./ui";
@@ -122,6 +122,7 @@ function ActorIcon({ type }: { type: string }) {
   if (type === "api_token") return <KeyIcon size={16} className={cls} />;
   if (type === "scim") return <IdentificationCardIcon size={16} className={cls} />;
   if (type === "system") return <RobotIcon size={16} className={cls} />;
+  if (type === "instance_admin") return <ShieldStarIcon size={16} className={cls} />;
   return <UserIcon size={16} className={cls} />;
 }
 
@@ -314,8 +315,21 @@ export function AuditLogView({ path, exportPath, scope, showOrg, compact, initia
                   <Badge variant={selected.outcome === "success" ? "success" : "error"}>{selected.outcome === "success" ? "Succeeded" : "Failed"}</Badge>
                 </DetailRow>
                 <DetailRow label="Actor">
-                  {selected.actor_label} <span className="text-kumo-subtle">({selected.actor_type.replace("_", " ")})</span>
+                  {selected.actor_type === "instance_admin" ? (
+                    <span>
+                      {selected.actor_label} <span className="text-kumo-subtle">(identity hidden)</span>
+                    </span>
+                  ) : (
+                    <span>
+                      {selected.actor_label} <span className="text-kumo-subtle">({selected.actor_type.replace("_", " ")})</span>
+                    </span>
+                  )}
                 </DetailRow>
+                {selected.instance_admin && selected.actor_type !== "instance_admin" && (
+                  <DetailRow label="Visibility">
+                    <span className="text-kumo-subtle">Performed through instance administration. Organization members see the actor, IP address and client as hidden.</span>
+                  </DetailRow>
+                )}
                 <DetailRow label="Resource">
                   <Mono>
                     {selected.resource_type} {stripDot(selected.resource_name)}
@@ -323,9 +337,9 @@ export function AuditLogView({ path, exportPath, scope, showOrg, compact, initia
                 </DetailRow>
                 {selected.org_name && <DetailRow label="Organization">{selected.org_name}</DetailRow>}
                 <DetailRow label="IP address">
-                  <Mono>{selected.ip || "None"}</Mono>
+                  {selected.actor_type === "instance_admin" ? <span className="text-kumo-subtle">Hidden</span> : <Mono>{selected.ip || "None"}</Mono>}
                 </DetailRow>
-                <DetailRow label="Client">{parseUA(selected.user_agent)}</DetailRow>
+                <DetailRow label="Client">{selected.actor_type === "instance_admin" ? <span className="text-kumo-subtle">Hidden</span> : parseUA(selected.user_agent)}</DetailRow>
                 <DetailRow label="Event ID">
                   <Mono>{selected.id}</Mono>
                 </DetailRow>

@@ -78,6 +78,9 @@ func (a *App) writeAuditPage(w http.ResponseWriter, r *http.Request, f store.Aud
 		a.fail(w, r, err)
 		return
 	}
+	if f.HideInstanceAdmin {
+		maskInstanceAdmins(entries)
+	}
 	var next *int64
 	if len(entries) == f.Limit {
 		n := entries[len(entries)-1].ID
@@ -96,6 +99,7 @@ func (a *App) handleOrgAudit(w http.ResponseWriter, r *http.Request) {
 	org := orgFrom(ctx)
 	f.OrgID = &org.ID
 	f.IncludeMemberAuth = f.ZoneID == nil
+	f.HideInstanceAdmin = !canSeeInstanceAdmins(ctx)
 	acc := accessFrom(ctx)
 	if acc.ZoneIDs != nil && f.ZoneID == nil {
 		a.fail(w, r, errForbidden("Your access is limited to specific zones. Filter the audit log by zone."))
@@ -113,6 +117,7 @@ func (a *App) handleZoneAudit(w http.ResponseWriter, r *http.Request) {
 	z := zoneFrom(r.Context())
 	f.OrgID = &z.OrgID
 	f.ZoneID = &z.ID
+	f.HideInstanceAdmin = !canSeeInstanceAdmins(r.Context())
 	a.writeAuditPage(w, r, f)
 }
 
@@ -150,6 +155,9 @@ func (a *App) streamAuditExport(w http.ResponseWriter, r *http.Request, f store.
 			break
 		}
 		for _, e := range page {
+			if f.HideInstanceAdmin {
+				maskInstanceAdmin(&e)
+			}
 			if cw != nil {
 				_ = cw.Write([]string{strconv.FormatInt(e.ID, 10), e.CreatedAt.UTC().Format(time.RFC3339), e.OrgName, e.ActorType, e.ActorLabel,
 					e.Action, e.ResourceType, e.ResourceID, e.ResourceName, e.Outcome, e.IP, e.UserAgent, string(e.Metadata)})
@@ -178,6 +186,7 @@ func (a *App) handleOrgAuditExport(w http.ResponseWriter, r *http.Request) {
 	org := orgFrom(r.Context())
 	f.OrgID = &org.ID
 	f.IncludeMemberAuth = f.ZoneID == nil
+	f.HideInstanceAdmin = !canSeeInstanceAdmins(r.Context())
 	if accessFrom(r.Context()).ZoneIDs != nil {
 		a.fail(w, r, errForbidden("Exports are not available for zone-scoped members."))
 		return

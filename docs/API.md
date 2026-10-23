@@ -6,6 +6,8 @@ Base path: `/api/v1`. Request and response bodies are JSON.
 - Browser sessions use the `flare_session` cookie. State-changing requests must send the `X-CSRF-Token` header with the value of the `flare_csrf` cookie.
 - Automation uses `Authorization: Bearer <api token>`. Organization tokens are bound to one organization. Global tokens, created by instance administrators, work in all or selected organizations and can be given access to the admin API.
 
+**Audit entries** carry `instance_admin: true` when they were made through instance administration: the `/admin` API, an instance administrator acting in an organization they are not a member of, or a global API token. Organization audit logs, exports, overviews and webhooks show these with `actor_type: "instance_admin"`, `actor_label: "Instance administrator"` and no actor ID, IP address or user agent, and actor or IP searches do not match them. Instance administrators and Full administrator tokens see the full entry.
+
 **Errors**: `{"error": {"code": "...", "message": "...", "fields": {"field": "message"}}}`
 
 | Status | Code examples |

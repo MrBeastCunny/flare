@@ -37,7 +37,7 @@ Flare is a multi-tenant DNS management platform for [PowerDNS Authoritative Serv
 - Session management, including revoking sessions on other devices
 
 **Governance and operations**
-- Audit log of every sign-in, DNS change and administrative action, with filters, infinite scroll and CSV or JSON export
+- Audit log of every sign-in, DNS change and administrative action, with filters, infinite scroll and CSV or JSON export. Changes made through instance administration appear to organization members as "Instance administrator", without the administrator's identity, IP address or client
 - Signed webhooks (HMAC-SHA256) with retries and a delivery log
 - Instance administration: servers (statistics, runtime configuration, TSIG keys, zone adoption), nameserver sets, users (create, edit, reset 2FA, disable), organizations, global settings, SMTP, retention, and an announcement banner
 - First-run setup wizard and guided user onboarding
